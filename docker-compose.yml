@@ -1,0 +1,131 @@
+# KnowFlow 本地依赖容器
+# 启动：docker compose up -d
+# 停止：docker compose down
+# 清理数据：docker compose down -v
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: knowflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${KNOWFLOW_POSTGRES_DB:-knowflow}
+      POSTGRES_USER: ${KNOWFLOW_POSTGRES_USER:-knowflow}
+      POSTGRES_PASSWORD: ${KNOWFLOW_POSTGRES_PASSWORD:-nexus}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # 用 pg_isready 探测就绪，依赖 pgdata 初始化完成
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7
+    container_name: knowflow-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: knowflow-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${KNOWFLOW_MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${KNOWFLOW_MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web Console
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Milvus 依赖 etcd 与 minio（内部对象存储，与上面的 minio 实例分开）
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: knowflow-etcd
+    restart: unless-stopped
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - etcddata:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    container_name: knowflow-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: milvus-minio-internal:9000
+      MINIO_REGION: us-east-1
+    depends_on:
+      etcd:
+        condition: service_healthy
+      milvus-minio-internal:
+        condition: service_healthy
+    ports:
+      - "19530:19530"  # gRPC
+      - "9091:9091"    # metrics / health
+    volumes:
+      - milvusdata:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Milvus 内部对象存储（与业务 MinIO 隔离，避免命名冲突）
+  milvus-minio-internal:
+    image: minio/minio:latest
+    container_name: knowflow-milvus-minio
+    restart: unless-stopped
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - milvusminiodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  etcddata:
+  milvusdata:
+  milvusminiodata:
