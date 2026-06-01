@@ -1,0 +1,72 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# ── 虚拟环境 ──
+.venv/
+venv/
+env/
+ENV/
+
+# ── 测试与覆盖率 ──
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.pytest_cache/
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+
+# ── uv ──
+# uv.lock 需要提交到仓库（锁定依赖版本），不忽略
+
+# ── 环境变量与密钥 ──
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets.yaml
+
+# ── IDE ──
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── 数据库与存储 ──
+*.sqlite
+*.sqlite3
+*.db
+pgdata/
+milvus_data/
+redis_data/
+minio_data/
+
+# ── 日志 ──
+logs/
+*.log
+
+# ── 文档构建 ──
+site/
+
+# ── 临时文件 ──
+*.tmp
+*.bak
+tmp/
+
+# ── 评测与报告（保留目录结构，忽略产物）──
+eval/reports/*.md
+!eval/reports/.gitkeep
