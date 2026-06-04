@@ -290,3 +290,69 @@ $env:GIT_COMMITTER_DATE = "2026-06-03T18:30:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+## M1 · 修复与改进（2026-06-04）
+
+**Phase 总览**：M1 代码审查后修复两个 Bug（init_engine 惰性连接导致连通性检查误报 OK，check_env 对 PostgreSQL 虚假通过）并补充工程改进（main.py 健康检查端点测试、.gitignore 放行评测报告入库）。门禁全绿：ruff 0 errors / mypy 0 issues / 63 tests passed，总覆盖率提升至 73%。
+
+---
+
+### 19. fix(db): 修复 init_engine 不验证数据库连通
+
+- **提交时间**：2026-06-04 09:00
+- **说明**：`create_async_engine` 为惰性连接，原 `init_engine()` 仅创建引擎不执行查询，导致 PostgreSQL 不可用时连通性检查仍误报 OK（check_env.py 与 lifespan 均受影响）。修复：初始化后执行一次 `SELECT 1` 真实探测，失败时先 dispose 再抛出，不留引擎泄漏。修复后 check_env 对 PostgreSQL 如实反映 FAIL。
+- **变更文件**：`src/knowflow/db/base.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-04T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-04T09:00:00+08:00"
+git add src/knowflow/db/base.py
+git commit -m "fix(db): 修复 init_engine 不验证数据库连通"
+```
+
+---
+
+### 20. test(api): 添加应用工厂与健康检查端点测试
+
+- **提交时间**：2026-06-04 10:00
+- **说明**：新增 `tests/unit/test_main.py` 覆盖 `/health`、`/`、`/docs` 三个端点，main.py 覆盖率由 0% 提升至 100%，总覆盖率 69% → 73%。TestClient 不带 context manager 使用，避免触发 lifespan 连接外部依赖（首版带 with 导致全量测试耗时 128s，优化后 4.3s）。
+- **变更文件**：`tests/unit/test_main.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-04T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-04T10:00:00+08:00"
+git add tests/unit/test_main.py
+git commit -m "test(api): 添加应用工厂与健康检查端点测试"
+```
+
+---
+
+### 21. chore: 放行评测报告文件入库
+
+- **提交时间**：2026-06-04 10:30
+- **说明**：.gitignore 原忽略 `eval/reports/*.md`，但指标报告（compare_baseline / final_report）是面试证据，需入库展示。移除该忽略规则，仅保留目录注释。
+- **变更文件**：`.gitignore`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-04T10:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-04T10:30:00+08:00"
+git add .gitignore
+git commit -m "chore: 放行评测报告文件入库"
+```
+
+---
+
+### 22. docs: 更新提交日志
+
+- **提交时间**：2026-06-04 11:00
+- **说明**：记录本次修复与改进的 3 个提交（19-21）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-04T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-04T11:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
