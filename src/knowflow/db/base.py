@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -19,18 +20,26 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 async def init_engine() -> None:
-    """创建全局 async engine 与 session factory."""
+    """创建全局 async engine 与 session factory, 并验证数据库连通."""
     global _engine, _session_factory
     settings = get_settings()
-    _engine = create_async_engine(
+    engine = create_async_engine(
         settings.postgres_dsn,
         pool_size=10,
         max_overflow=20,
         pool_pre_ping=True,
         echo=settings.debug and settings.is_test is False,
     )
+    # create_async_engine 是惰性连接, 必须执行一次查询才能发现 PG 不可达
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:
+        await engine.dispose()
+        raise
+    _engine = engine
     _session_factory = async_sessionmaker(
-        _engine,
+        engine,
         expire_on_commit=False,
         class_=AsyncSession,
     )
