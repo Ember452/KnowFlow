@@ -67,6 +67,4 @@ site/
 *.bak
 tmp/
 
-# ── 评测与报告（保留目录结构，忽略产物）──
-eval/reports/*.md
-!eval/reports/.gitkeep
+# ── 评测与报告（指标报告为面试证据, 必须入库, 不忽略）──
