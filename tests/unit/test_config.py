@@ -50,3 +50,22 @@ def test_minio_secure_bool() -> None:
     """minio_secure 应正确解析为 bool."""
     s = Settings(_env_file=None, minio_secure=True)
     assert s.minio_secure is True
+
+
+def test_retrieval_defaults() -> None:
+    """检索参数应有默认值且与 constants 对齐."""
+    from knowflow.core.constants import (
+        DEFAULT_CHUNK_OVERLAP,
+        DEFAULT_CHUNK_SIZE,
+        DEFAULT_TOP_K,
+        RRF_K,
+    )
+
+    s = Settings(_env_file=None)
+    assert s.chunk_size == DEFAULT_CHUNK_SIZE == 512
+    assert s.chunk_overlap == DEFAULT_CHUNK_OVERLAP == 64
+    assert s.retrieval_top_k == DEFAULT_TOP_K == 10
+    assert s.rrf_k == RRF_K == 60
+    assert s.retrieval_cache_ttl_seconds == 300
+    assert s.embedding_batch_size == 32
+    assert s.reranker_top_k == 10

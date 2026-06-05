@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-m3"
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
 
+    # ── 检索 ──
+    chunk_size: int = 512  # 分块字符数, 默认与 constants.DEFAULT_CHUNK_SIZE 一致
+    chunk_overlap: int = 64  # 分块重叠字符数
+    retrieval_top_k: int = 10  # 检索返回 top_k
+    rrf_k: int = 60  # Reciprocal Rank Fusion 经典参数
+    retrieval_cache_ttl_seconds: int = 300  # 检索结果缓存 TTL
+    embedding_batch_size: int = 32  # Embedding 批量推理大小
+    reranker_top_k: int = 10  # Reranker 精排后截断数
+
     # ── 上下文工程 ──
     context_budget_tokens: int = 32000
     spill_threshold_tokens: int = 4000
