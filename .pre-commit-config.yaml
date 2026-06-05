@@ -5,20 +5,17 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.13.0
+  - repo: local
     hooks:
       - id: mypy
-        # src layout 下需 --explicit-package-bases 才能正确解析 knowflow 顶层包；
+        # 用项目 venv 跑 mypy, 避免在 additional_dependencies 维护依赖列表
+        # (P3 引入 markdown/python-docx/pymupdf 等无 stubs 库, 隔离环境报 import-untyped)
+        name: mypy (uv run)
+        entry: uv run mypy
+        language: system
+        # src layout 下需 --explicit-package-bases 才能正确解析 knowflow 顶层包;
         # pass_filenames=false 避免 hook 把单文件路径传给 mypy 触发 duplicate module 误报
         args: [--explicit-package-bases, src/, worker/]
-        additional_dependencies:
-          - pydantic>=2.9
-          - pydantic-settings>=2.5
-          - sqlalchemy[asyncio]>=2.0
-          - structlog>=24.4
-          - redis>=5.0
-          - alembic>=1.13
         pass_filenames: false
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
