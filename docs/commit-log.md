@@ -356,3 +356,204 @@ $env:GIT_COMMITTER_DATE = "2026-06-04T11:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+## M2 · P3 · GraphRAG 检索模块（2026-06-05 ~ 2026-06-08）
+
+**Phase 总览**：实现完整 GraphRAG 检索链路，覆盖文档解析→递归分块→embedding→LLM 实体抽取→三写入库（图谱/向量/BM25）→Hybrid 召回（RRF 融合）→一跳扩展→Reranker 精排→Redis 缓存→pipeline 编排，配套合成评测语料与 baseline 对比脚本。13 个子模块 + 13 个单测文件（194 个用例），核心模块覆盖率 ≥ 70%（bm25_store 91% / cache 89% / embedding 86% / entity_extractor 90% / graph_store 100% / hybrid_search 100% / splitter 100% / expander 98% / pipeline 93% / retriever 88% / vector_store 84% / reranker 70%），总覆盖率 85%。合成语料静态模式跑通对比报告（Hybrid R@10=33.6% / GraphRAG R@10=32.6%，cross_doc 组 GraphRAG MRR +0.0667），真实 LLM/Milvus 链路指标测试文档交付用户实测。
+
+---
+
+### 23. feat(core): 补充检索参数配置字段
+
+- **提交时间**：2026-06-05 09:00
+- **说明**：`Settings` 类新增 `# ── 检索 ──` 段，包含 `chunk_size=512` / `chunk_overlap=64` / `retrieval_top_k=10` / `rrf_k=60` / `retrieval_cache_ttl_seconds=300` / `embedding_batch_size=32` / `reranker_top_k=10` 七个字段，默认值与 `core/constants.py` 对齐，避免硬编码。`.env.example` 同步补充检索段示例。单测扩展新字段默认值断言。
+- **变更文件**：`src/knowflow/core/config.py`、`tests/unit/test_config.py`、`.env.example`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-05T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-05T09:00:00+08:00"
+git add src/knowflow/core/config.py tests/unit/test_config.py .env.example
+git commit -m "feat(core): 补充检索参数配置字段"
+```
+
+---
+
+### 24. feat(retrieval): 实现文档解析器与文本清洗
+
+- **提交时间**：2026-06-05 11:00
+- **说明**：`cleaner.py` 实现文本清洗（规范化空白、折叠多空格/换行、剥离零宽字符 \u200b/\ufeff、统一全角空格、处理 \r\n/\r 行尾）。`parser.py` 按扩展名分发到四类解析器：`text_parser.py`（bytes/str）、`markdown_parser.py`（markdown 库转纯文本去标签）、`pdf_parser.py`（pymupdf 逐页取 text）、`docx_parser.py`（python-docx 拼接段落）。所有解析器返回经 clean 的纯文本。`.pre-commit-config.yaml` 改用项目 venv 跑 mypy 解决无 stubs 库的 import-untyped 报错。单测覆盖四类分发、不支持类型异常、空白折叠、零宽字符剥离。
+- **变更文件**：`src/knowflow/retrieval/indexer/cleaner.py`、`src/knowflow/retrieval/indexer/parser.py`、`src/knowflow/retrieval/indexer/text_parser.py`、`src/knowflow/retrieval/indexer/markdown_parser.py`、`src/knowflow/retrieval/indexer/pdf_parser.py`、`src/knowflow/retrieval/indexer/docx_parser.py`、`tests/unit/retrieval/test_cleaner.py`、`tests/unit/retrieval/test_parser.py`、`.pre-commit-config.yaml`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-05T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-05T11:00:00+08:00"
+git add src/knowflow/retrieval/indexer/cleaner.py src/knowflow/retrieval/indexer/parser.py src/knowflow/retrieval/indexer/text_parser.py src/knowflow/retrieval/indexer/markdown_parser.py src/knowflow/retrieval/indexer/pdf_parser.py src/knowflow/retrieval/indexer/docx_parser.py tests/unit/retrieval/test_cleaner.py tests/unit/retrieval/test_parser.py .pre-commit-config.yaml
+git commit -m "feat(retrieval): 实现文档解析器与文本清洗"
+```
+
+---
+
+### 25. feat(retrieval): 实现递归字符分块
+
+- **提交时间**：2026-06-05 14:00
+- **说明**：`splitter.py` 实现递归字符分块，按分隔符优先级（`\n\n → \n → 。 → 空格`）递归切分到 chunk_size 以内，分隔符保留在前一块末尾保持语义边界，所有分隔符用尽仍超长则按 chunk_size 硬切。相邻分块保留 overlap 字符（前块末尾拼到后块前缀，不超 chunk_size 才拼避免膨胀）。参数校验：chunk_size > 0、overlap >= 0、overlap < chunk_size。单测覆盖短文本不切、超长递归切分、overlap 边界、空输入、参数异常。
+- **变更文件**：`src/knowflow/retrieval/indexer/splitter.py`、`tests/unit/retrieval/test_splitter.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-05T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-05T14:00:00+08:00"
+git add src/knowflow/retrieval/indexer/splitter.py tests/unit/retrieval/test_splitter.py
+git commit -m "feat(retrieval): 实现递归字符分块"
+```
+
+---
+
+### 26. feat(retrieval): 实现 Embedding 客户端封装
+
+- **提交时间**：2026-06-05 16:00
+- **说明**：`EmbeddingClient` 类封装 sentence-transformers，`embed(texts)` 批量接口按 `embedding_batch_size` 分批推理，`embed_one(text)` 单条便利方法。底层用 `SentenceTransformer(settings.embedding_model)`（默认 BAAI/bge-m3，dim=1024），进程内单例懒加载（`get_embedding_client()`）。单测 monkeypatch 替换模型，验证批量分批、维度、单条与批量一致性。
+- **变更文件**：`src/knowflow/retrieval/embedding.py`、`tests/unit/retrieval/test_embedding.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-05T16:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-05T16:00:00+08:00"
+git add src/knowflow/retrieval/embedding.py tests/unit/retrieval/test_embedding.py
+git commit -m "feat(retrieval): 实现 Embedding 客户端封装"
+```
+
+---
+
+### 27. feat(retrieval): 实现 LLM 实体关系抽取
+
+- **提交时间**：2026-06-06 09:00
+- **说明**：`EntityExtractor` 类用 `langchain_openai.ChatOpenAI`（DeepSeek）抽取实体与关系。`extract(chunk_text)` 调 LLM 输出严格 JSON（`{"entities": [{"name","type"}], "relations": [{"source","target","relation_type"}]}`），JSON 解析失败重试最多 2 次，仍失败返回空结果 + warning（不阻塞索引）。`normalize()` 归一化（name 小写化、去空白）。数据类 `Entity`/`Relation`/`ExtractResult`。单测用 fake LLM 覆盖正常解析、错误 JSON 重试、空结果降级、归一化。
+- **变更文件**：`src/knowflow/retrieval/entity_extractor.py`、`tests/unit/retrieval/test_entity_extractor.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-06T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-06T09:00:00+08:00"
+git add src/knowflow/retrieval/entity_extractor.py tests/unit/retrieval/test_entity_extractor.py
+git commit -m "feat(retrieval): 实现 LLM 实体关系抽取"
+```
+
+---
+
+### 28. feat(retrieval): 实现图谱与向量与 BM25 存储
+
+- **提交时间**：2026-06-06 11:00
+- **说明**：三个存储层并行实现。`graph_store.py` 封装 EntityRepo/RelationRepo，提供 `upsert_entities`/`upsert_relations`/`find_entity_ids_by_chunk`/`one_hop_expand`，薄封装复用 M1 repo 不引入新 SQL。`vector_store.py` 封装 Milvus，`upsert` 批量写向量、`search` 向量召回（IP 度量）、`delete_by_doc` 按 doc 清理，数据类 `ChunkVector`/`VectorHit`。`bm25_store.py` 用 rank-bm25 内存索引（docstring 记录与设计文档 tsvector 的取舍），中英文混合分词（中文按字符、英文按空格），`add`/`add_batch` 增量追加、`search` 关键词召回、`delete_by_doc` 重建、`rebuild_from_chunks` 从 ORM 重建。单测：graph_store 用 SQLite 真跑实体/关系写入与一跳扩展联动；vector_store mock Milvus 验证参数与返回解析；bm25_store 验证构建/查询/增量/删除/中文 tokenization。
+- **变更文件**：`src/knowflow/retrieval/graph_store.py`、`src/knowflow/retrieval/vector_store.py`、`src/knowflow/retrieval/bm25_store.py`、`tests/unit/retrieval/test_graph_store.py`、`tests/unit/retrieval/test_vector_store.py`、`tests/unit/retrieval/test_bm25_store.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-06T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-06T11:00:00+08:00"
+git add src/knowflow/retrieval/graph_store.py src/knowflow/retrieval/vector_store.py src/knowflow/retrieval/bm25_store.py tests/unit/retrieval/test_graph_store.py tests/unit/retrieval/test_vector_store.py tests/unit/retrieval/test_bm25_store.py
+git commit -m "feat(retrieval): 实现图谱与向量与 BM25 存储"
+```
+
+---
+
+### 29. feat(retrieval): 实现 Hybrid Search RRF 融合
+
+- **提交时间**：2026-06-06 14:00
+- **说明**：`HybridSearch` 类组合 VectorStore + BM25Store + EmbeddingClient，`search(query, top_k)` 并行向量召回（embed query → vector_store.search）与 BM25 召回，按 RRF 公式 `score(d) = sum(1/(k+rank))` 融合两路结果，k 默认 60（与 constants.RRF_K 一致）。`fuse` 为静态方法便于单测直接调。数据类 `ChunkScore(chunk_id, score, source)`。单测重点测 RRF 融合算法：mock 两路返回固定 hits，验证融合分数与排序，覆盖单路命中、双路命中、空命中。
+- **变更文件**：`src/knowflow/retrieval/hybrid_search.py`、`tests/unit/retrieval/test_hybrid_search.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-06T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-06T14:00:00+08:00"
+git add src/knowflow/retrieval/hybrid_search.py tests/unit/retrieval/test_hybrid_search.py
+git commit -m "feat(retrieval): 实现 Hybrid Search RRF 融合"
+```
+
+---
+
+### 30. feat(retrieval): 实现一跳扩展与 Reranker 精排
+
+- **提交时间**：2026-06-06 16:00
+- **说明**：`Expander` 类注入 GraphStore + AsyncSession，`expand(hits)` 从 hits 取 chunk_id → graph_store.find_entity_ids_by_chunk 收集 entity_ids → graph_store.one_hop_expand 取关联 chunk_ids → ChunkRepo.get_many 取内容 → 构造 ChunkScore(score=0.0, source="expand") 合并去重（保留原始 hits 分数，扩展 chunk 置 0 排后），自环剔除。`Reranker` 类封装 sentence-transformers CrossEncoder（bge-reranker-v2-m3），`rerank(query, chunks, top_k)` 对 (query, chunk.content) 打分降序取 top_k，进程内单例 `get_reranker()` 懒加载。单测：expander 用 SQLite 真跑一跳扩展验证命中/自环剔除/去重/无实体；reranker mock CrossEncoder 验证排序/top_k 截断/空输入。
+- **变更文件**：`src/knowflow/retrieval/expander.py`、`src/knowflow/retrieval/reranker.py`、`tests/unit/retrieval/test_expander.py`、`tests/unit/retrieval/test_reranker.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-06T16:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-06T16:00:00+08:00"
+git add src/knowflow/retrieval/expander.py src/knowflow/retrieval/reranker.py tests/unit/retrieval/test_expander.py tests/unit/retrieval/test_reranker.py
+git commit -m "feat(retrieval): 实现一跳扩展与 Reranker 精排"
+```
+
+---
+
+### 31. feat(retrieval): 实现检索缓存与统一入口
+
+- **提交时间**：2026-06-07 09:00
+- **说明**：`RetrievalCache` 类用 Redis 缓存检索结果，`get(query)` md5(query) 作 key 命中反序列化、`set(query, results)` JSON 序列化 + EXPIRE、`invalidate(query)`/`clear_prefix(prefix)`，Redis 不可用降级 no-op + warning。`GraphRAGRetriever` 编排完整链路：cache.get → miss 时 hybrid_search.search(top_k*2) → expander.expand → 合并 → reranker.rerank(top_k) → cache.set → 返回 `RetrievalResult(chunks: list[ChunkWithScore], query, latency_ms, cache_hit)`。with_expand/with_rerank 开关控制子阶段。单测 mock 各子组件验证缓存命中跳过全链路、调用顺序、开关、cache set、空查询、内容返回、latency 记录。
+- **变更文件**：`src/knowflow/retrieval/cache.py`、`src/knowflow/retrieval/retriever.py`、`tests/unit/retrieval/test_cache.py`、`tests/unit/retrieval/test_retriever.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-07T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-07T09:00:00+08:00"
+git add src/knowflow/retrieval/cache.py src/knowflow/retrieval/retriever.py tests/unit/retrieval/test_cache.py tests/unit/retrieval/test_retriever.py
+git commit -m "feat(retrieval): 实现检索缓存与统一入口"
+```
+
+---
+
+### 32. feat(retrieval): 实现索引编排 pipeline
+
+- **提交时间**：2026-06-07 14:00
+- **说明**：`RetrievalPipeline` 串联索引全链路：DocumentRepo.get → MinIO 下载临时文件 → parser.parse → splitter.split → update_status("indexing") → 逐块 ChunkRepo.create + embedding.embed_one + VectorStore.upsert(批量) + BM25Store.add_batch → 逐块 entity_extractor.extract + GraphStore.upsert_entities/relations → DocumentIndexRepo.upsert(三路状态) → update_status("ready")。异常时 update_status("failed") + 抛 IndexError。`reindex_document` 先清理 vector/bm25/chunks(DB 级联 entities/relations) 再调 index_document。`IndexDeps` 依赖容器便于单测注入。单测 mock 全部子组件 + MinIO + db_session 验证状态机流转、调用次数与顺序、异常路径、reindex 清理顺序。
+- **变更文件**：`src/knowflow/retrieval/pipeline.py`、`tests/unit/retrieval/test_pipeline.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-07T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-07T14:00:00+08:00"
+git add src/knowflow/retrieval/pipeline.py tests/unit/retrieval/test_pipeline.py
+git commit -m "feat(retrieval): 实现索引编排 pipeline"
+```
+
+---
+
+### 33. feat(scripts): 添加 Milvus collection 初始化脚本
+
+- **提交时间**：2026-06-07 16:00
+- **说明**：`scripts/init_milvus.py` 建 `settings.milvus_collection`（若不存在），schema：id(INT64 PK)=chunk_id / doc_id(INT64) / embedding(FLOAT_VECTOR dim=1024)，索引 HNSW(M=16, efConstruction=200) 度量 IP。支持 `--reset` 先删后建。脚本将 src/ 加入 sys.path，可直接 `python scripts/init_milvus.py` 运行。真实创建由用户在测试文档中执行。
+- **变更文件**：`scripts/init_milvus.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-07T16:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-07T16:00:00+08:00"
+git add scripts/init_milvus.py
+git commit -m "feat(scripts): 添加 Milvus collection 初始化脚本"
+```
+
+---
+
+### 34. eval(retrieval): 构建合成评测集与 baseline 对比脚本
+
+- **提交时间**：2026-06-08 09:00
+- **说明**：合成 5 篇语料（hr_policy / product_manual / it_sop / ops_runbook / finance_policy，每篇 600-1000 字含人名/部门/产品/系统/流程实体与跨文档关联）。50 条评测集 `retrieval_eval.jsonl`（direct / cross_doc / semantic 三类）。`compare_baseline.py` 静态模式用 fake 组件（HashingEmbeddingClient / InMemoryVectorStore / RuleBasedEntityExtractor / TermOverlapReranker / NoopCache）+ SQLite 跑通全链路：索引语料 → 跨文档实体链接（同名实体双向 same_as）→ 对每条 query 跑 Hybrid（无扩展无精排）与 GraphRAG（扩展+精排）→ 计算 Recall@10 / MRR → 生成对比报告。评测专用 chunk_size=128（env var 覆盖）产出 43 块使 top_k=10 有区分度。静态结果：Hybrid R@10=33.6% / GraphRAG R@10=32.6%，cross_doc 组 GraphRAG MRR +0.0667。真实模式提示用户按测试文档执行。
+- **变更文件**：`eval/datasets/corpus/hr_policy.md`、`eval/datasets/corpus/product_manual.md`、`eval/datasets/corpus/it_sop.md`、`eval/datasets/corpus/ops_runbook.md`、`eval/datasets/corpus/finance_policy.md`、`eval/datasets/retrieval_eval.jsonl`、`eval/scripts/compare_baseline.py`、`pyproject.toml`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-08T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-08T09:00:00+08:00"
+git add eval/datasets/corpus/hr_policy.md eval/datasets/corpus/product_manual.md eval/datasets/corpus/it_sop.md eval/datasets/corpus/ops_runbook.md eval/datasets/corpus/finance_policy.md eval/datasets/retrieval_eval.jsonl eval/scripts/compare_baseline.py
+git commit -m "eval(retrieval): 构建合成评测集与 baseline 对比脚本"
+```
+
+---
+
+### 35. docs(tests): 编写检索指标测试文档
+
+- **提交时间**：2026-06-08 11:00
+- **说明**：`docs/tests/指标测试-检索.md` 按 AGENTS.md 2.2 节要求编写，包含：前置条件（docker compose 启动 PG/Milvus/Redis/MinIO + LLM API Key + bge-m3/reranker 模型缓存 + init_db/init_milvus 脚本）、启动步骤（服务状态确认 + 门禁通过 + 静态模式自检）、5 项真实模式测试（索引真实文档 / 跨文档实体链接 / Hybrid vs GraphRAG 对比核心指标 / 缓存命中验证 / reindex 重建索引）、每项含步骤+预期结果+结果记录表（留空待用户填写）、验收清单、备注说明静态模式局限性（fake 组件不作 ≥8% 验收依据）与真实模式预期提升来源。
+- **变更文件**：`docs/tests/指标测试-检索.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-08T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-08T11:00:00+08:00"
+git add "docs/tests/指标测试-检索.md"
+git commit -m "docs(tests): 编写检索指标测试文档"
+```
