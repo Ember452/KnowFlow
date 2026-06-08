@@ -73,6 +73,8 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 # tests 允许断言风格与裸 except 提示
 "tests/**" = ["S101"]
+# eval 脚本需在 import 前设置环境变量(如 chunk_size), 允许非顶层 import 与宽松排序
+"eval/scripts/**" = ["E402", "I001"]
 
 [tool.mypy]
 python_version = "3.13"

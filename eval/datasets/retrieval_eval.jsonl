@@ -1,0 +1,50 @@
+{"query": "年假有几天", "doc_ids": [1], "category": "direct"}
+{"query": "病假工资怎么算", "doc_ids": [1], "category": "direct"}
+{"query": "迟到多久不扣薪", "doc_ids": [1], "category": "direct"}
+{"query": "报销审批流程是什么", "doc_ids": [1, 5], "category": "direct"}
+{"query": "KnowFlow用什么检索架构", "doc_ids": [2], "category": "direct"}
+{"query": "GraphRAG包含哪些能力", "doc_ids": [2], "category": "direct"}
+{"query": "上下文预算多少token", "doc_ids": [2], "category": "direct"}
+{"query": "工单系统用什么软件", "doc_ids": [3], "category": "direct"}
+{"query": "VPN账号有效期多久", "doc_ids": [3], "category": "direct"}
+{"query": "新员工发放什么设备", "doc_ids": [3], "category": "direct"}
+{"query": "日常巡检几点执行", "doc_ids": [4], "category": "direct"}
+{"query": "P0故障怎么处理", "doc_ids": [4], "category": "direct"}
+{"query": "数据备份存在哪里", "doc_ids": [4], "category": "direct"}
+{"query": "差旅费住宿标准多少", "doc_ids": [5], "category": "direct"}
+{"query": "发票抬头需要什么", "doc_ids": [5], "category": "direct"}
+{"query": "张三负责什么工作", "doc_ids": [1, 3, 4, 5], "category": "cross_doc"}
+{"query": "张三在哪些部门有职责", "doc_ids": [1, 3, 4, 5], "category": "cross_doc"}
+{"query": "报销流程涉及哪些部门", "doc_ids": [1, 5], "category": "cross_doc"}
+{"query": "工单系统在哪些场景使用", "doc_ids": [3, 4], "category": "cross_doc"}
+{"query": "入职流程需要做什么", "doc_ids": [1, 3], "category": "cross_doc"}
+{"query": "离职需要办理什么手续", "doc_ids": [1, 3], "category": "cross_doc"}
+{"query": "考勤系统在哪些流程中使用", "doc_ids": [1, 5], "category": "cross_doc"}
+{"query": "部门总监审批哪些事项", "doc_ids": [1, 5], "category": "cross_doc"}
+{"query": "Jira系统谁管理", "doc_ids": [3], "category": "cross_doc"}
+{"query": "值班负责人是谁", "doc_ids": [4], "category": "cross_doc"}
+{"query": "新员工入职需要开通哪些账号", "doc_ids": [1, 3], "category": "cross_doc"}
+{"query": "离职时账号怎么处理", "doc_ids": [1, 3], "category": "cross_doc"}
+{"query": "报销超时怎么处理", "doc_ids": [1, 5], "category": "cross_doc"}
+{"query": "哪些情况需要报告人力资源部", "doc_ids": [1, 3, 5], "category": "cross_doc"}
+{"query": "数据备份恢复需要什么审批", "doc_ids": [3, 4], "category": "cross_doc"}
+{"query": "发布流程涉及哪些部门", "doc_ids": [3, 4], "category": "cross_doc"}
+{"query": "IT部负责哪些系统账号", "doc_ids": [1, 3], "category": "cross_doc"}
+{"query": "财务部打款周期是什么", "doc_ids": [1, 5], "category": "cross_doc"}
+{"query": "审计发现问题怎么处理", "doc_ids": [1, 5], "category": "cross_doc"}
+{"query": "安全规范有哪些要求", "doc_ids": [3], "category": "cross_doc"}
+{"query": "年资与休假天数的关系", "doc_ids": [1], "category": "semantic"}
+{"query": "考勤违规的后果", "doc_ids": [1], "category": "semantic"}
+{"query": "知识库平台的检索能力", "doc_ids": [2], "category": "semantic"}
+{"query": "Agent任务委派机制", "doc_ids": [2], "category": "semantic"}
+{"query": "上下文溢出怎么处理", "doc_ids": [2], "category": "semantic"}
+{"query": "网络故障响应时效", "doc_ids": [3], "category": "semantic"}
+{"query": "账号权限类工单处理时间", "doc_ids": [3], "category": "semantic"}
+{"query": "系统巡检检查哪些项目", "doc_ids": [4], "category": "semantic"}
+{"query": "夜班发现严重故障怎么办", "doc_ids": [4], "category": "semantic"}
+{"query": "预算超支怎么审批", "doc_ids": [5], "category": "semantic"}
+{"query": "发票不合规的后果", "doc_ids": [5], "category": "semantic"}
+{"query": "加急付款找谁", "doc_ids": [5], "category": "semantic"}
+{"query": "员工费用报销时限要求", "doc_ids": [1, 5], "category": "semantic"}
+{"query": "公司IT安全要求", "doc_ids": [3], "category": "semantic"}
+{"query": "生产环境发布窗口", "doc_ids": [4], "category": "semantic"}
