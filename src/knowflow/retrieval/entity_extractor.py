@@ -96,13 +96,14 @@ class EntityExtractor:
             return self._llm
         # 延迟导入: 避免模块加载时连 OpenAI
         from langchain_openai import ChatOpenAI
+        from pydantic import SecretStr
 
         from knowflow.core.config import get_settings
 
         settings = get_settings()
         self._llm = ChatOpenAI(
             model=settings.llm_model,
-            api_key=settings.llm_api_key,
+            api_key=SecretStr(settings.llm_api_key),
             base_url=settings.llm_base_url,
             temperature=0.0,  # 抽取任务用确定性输出
         )
