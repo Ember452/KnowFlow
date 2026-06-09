@@ -557,3 +557,39 @@ $env:GIT_COMMITTER_DATE = "2026-06-08T11:00:00+08:00"
 git add "docs/tests/指标测试-检索.md"
 git commit -m "docs(tests): 编写检索指标测试文档"
 ```
+
+---
+
+## M2 · 修复与改进（2026-06-09）
+
+**Phase 总览**：M2 代码检查后修复 ChatOpenAI api_key 类型不兼容导致 mypy 报错（langchain-openai 1.x 要求 SecretStr，M2 提交时即存在），并入库检索评测产物（chunk_id_map.json 与对比报告）。门禁全绿：ruff 0 errors / mypy 0 issues / 198 tests passed。
+
+---
+
+### 37. fix(retrieval): 修复 ChatOpenAI api_key 类型不兼容 mypy 报错
+
+- **提交时间**：2026-06-09 09:00
+- **说明**：`entity_extractor.py` 的 `_get_llm()` 中 `api_key=settings.llm_api_key` 为 str，与 langchain-openai 1.x `ChatOpenAI` 要求的 `SecretStr` 类型不兼容，mypy 报 arg-type 错误（该问题在 M2 提交时即存在，本次检查暴露）。修复：延迟导入 `pydantic.SecretStr` 包装 api_key，行为不变。
+- **变更文件**：`src/knowflow/retrieval/entity_extractor.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-09T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-09T09:00:00+08:00"
+git add src/knowflow/retrieval/entity_extractor.py
+git commit -m "fix(retrieval): 修复 ChatOpenAI api_key 类型不兼容 mypy 报错"
+```
+
+---
+
+### 38. chore: 入库检索评测产物
+
+- **提交时间**：2026-06-09 10:00
+- **说明**：`chunk_id_map.json`（索引后 chunk 映射表）与 `compare_20260608.md`（GraphRAG vs Hybrid 对比报告）为 M2 评测链路产物与面试证据，此前未入库。本次补录。
+- **变更文件**：`eval/datasets/chunk_id_map.json`、`eval/reports/compare_20260608.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-09T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-09T10:00:00+08:00"
+git add eval/datasets/chunk_id_map.json eval/reports/compare_20260608.md
+git commit -m "chore: 入库检索评测产物"
+```
