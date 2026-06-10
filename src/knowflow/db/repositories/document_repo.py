@@ -5,7 +5,7 @@
 
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowflow.models.document import Chunk, Document, DocumentIndex
@@ -60,6 +60,12 @@ class DocumentRepo:
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def count_by_user(self, user_id: str) -> int:
+        """按用户统计文档总数(分页 total 用)."""
+        stmt = select(func.count()).select_from(Document).where(Document.user_id == user_id)
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one())
 
     async def update_status(
         self, doc_id: int, status: str, error_message: str | None = None
