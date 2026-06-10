@@ -11,6 +11,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "sse-starlette>=2.1",
+    "python-multipart>=0.0.9",  # FastAPI UploadFile 依赖
     # Agent 编排
     "langgraph>=0.2",
     "langchain>=0.3",

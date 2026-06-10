@@ -71,6 +71,20 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 3600
     workspace_quota_bytes: int = 104857600  # 100MB
 
+    # ── API 与上传 ──
+    cors_origins: str = "*"  # 逗号分隔; dev 放开, prod 收紧
+    rate_limit_per_minute: int = 60  # 每 IP 每分钟请求上限
+    upload_max_bytes: int = 52428800  # 50MB
+    upload_allowed_types: str = "pdf,docx,md,txt"  # 逗号分隔
+
+    # ── 任务队列 (Redis Stream) ──
+    task_stream_index: str = "knowflow:tasks:index"  # 索引任务流
+    task_stream_dlq: str = "knowflow:tasks:dlq"  # 死信流
+    task_consumer_group: str = "knowflow-indexer"
+    task_consumer_name: str = "worker-1"
+    task_max_retries: int = 3
+    task_block_ms: int = 5000  # XREADGROUP 阻塞毫秒
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def postgres_dsn(self) -> str:
@@ -79,6 +93,18 @@ class Settings(BaseSettings):
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    @property
+    def allowed_types(self) -> list[str]:
+        """上传允许的文件扩展名列表(小写)."""
+        return [t.strip().lower() for t in self.upload_allowed_types.split(",") if t.strip()]
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """CORS 允许来源列表."""
+        if self.cors_origins.strip() == "*":
+            return ["*"]
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def is_test(self) -> bool:

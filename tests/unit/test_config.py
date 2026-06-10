@@ -69,3 +69,26 @@ def test_retrieval_defaults() -> None:
     assert s.retrieval_cache_ttl_seconds == 300
     assert s.embedding_batch_size == 32
     assert s.reranker_top_k == 10
+
+
+def test_api_and_task_defaults() -> None:
+    """M3 新增的 API/上传/任务队列字段应有默认值."""
+    s = Settings(_env_file=None)
+    assert s.api_prefix == "/api/v1"
+    assert s.rate_limit_per_minute == 60
+    assert s.upload_max_bytes == 52428800
+    assert s.upload_allowed_types == "pdf,docx,md,txt"
+    assert s.allowed_types == ["pdf", "docx", "md", "txt"]
+    assert s.task_stream_index == "knowflow:tasks:index"
+    assert s.task_consumer_group == "knowflow-indexer"
+    assert s.task_max_retries == 3
+    assert s.task_block_ms == 5000
+
+
+def test_cors_origin_list() -> None:
+    """cors_origins 解析: * 返回 ['*'], 否则逗号分隔."""
+    assert Settings(_env_file=None, cors_origins="*").cors_origin_list == ["*"]
+    assert Settings(_env_file=None, cors_origins="a.com,b.com").cors_origin_list == [
+        "a.com",
+        "b.com",
+    ]
