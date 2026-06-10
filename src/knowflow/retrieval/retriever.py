@@ -5,7 +5,7 @@ reranker.rerank(top_k) -> cache.set -> 返回 RetrievalResult.
 """
 
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,7 +45,7 @@ class GraphRAGRetriever:
         self,
         session_factory: Any,
         hybrid_search: HybridSearch,
-        expander: Expander,
+        expander_factory: Callable[[AsyncSession], Expander],
         reranker: Reranker,
         cache: RetrievalCache,
     ) -> None:
@@ -54,13 +54,14 @@ class GraphRAGRetriever:
         Args:
             session_factory: 异步 session factory(可调用, 返回 AsyncSession).
             hybrid_search: 混合检索器.
-            expander: 一跳扩展器.
+            expander_factory: 一跳扩展器工厂, 接收每次检索的 AsyncSession 返回 Expander.
+                扩展器需访问 DB, 必须使用调用方提供的 session, 而非构造时持有的过期 session.
             reranker: 精排器.
             cache: 检索缓存.
         """
         self._session_factory = session_factory
         self._hybrid_search = hybrid_search
-        self._expander = expander
+        self._expander_factory = expander_factory
         self._reranker = reranker
         self._cache = cache
 
@@ -109,10 +110,11 @@ class GraphRAGRetriever:
 
         # 3. 一跳扩展
         if with_expand and hits:
-            # expander 需要 AsyncSession, 从 factory 取
+            # expander 需要 AsyncSession, 从 factory 取, 并按该 session 构造 expander
             session: AsyncSession = await self._get_session()
             try:
-                hits = await self._expander.expand(hits)
+                expander = self._expander_factory(session)
+                hits = await expander.expand(hits)
             finally:
                 await session.close()
 

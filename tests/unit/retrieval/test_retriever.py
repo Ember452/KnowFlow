@@ -116,7 +116,7 @@ def _make_retriever(
     retriever = GraphRAGRetriever(
         session_factory=session_factory,
         hybrid_search=hybrid,
-        expander=expander,
+        expander_factory=lambda _session: expander,
         reranker=reranker,
         cache=cache,
     )
