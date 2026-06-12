@@ -593,3 +593,204 @@ $env:GIT_COMMITTER_DATE = "2026-06-09T10:00:00+08:00"
 git add eval/datasets/chunk_id_map.json eval/reports/compare_20260608.md
 git commit -m "chore: 入库检索评测产物"
 ```
+
+---
+
+## M3 · P4 · API 层、文档服务与异步索引（2026-06-10 ~ 2026-06-12）
+
+**Phase 总览**：完成 API 层与异步索引全链路。schemas 9 个文件对齐 models 与设计文档 3.5；api/deps.py 集中依赖注入（DB/Settings/Redis/MinIO/Retriever/Broker/租户上下文），middleware.py 实现请求 ID/访问日志/Redis 固定窗口限流（降级放行）/CORS，sse.py 用生产者+队列解耦的心跳封装（避免心跳误杀业务流）；services/document_service.py 编排上传校验→sha256 去重→MinIO 存储→入库→投递任务；tasks/broker.py 基于 Redis Stream（XADD/XREADGROUP/XACK/消费组/重试 3 次/DLQ），tasks/index_task.py 组装 IndexDeps 调 RetrievalPipeline；9 个 v1 端点（health/document/knowledge 全实现，chat/agent/skill/memory/trace/eval 占位 501 标注后续里程碑）；worker 独立消费进程（优雅退出+重试/DLQ）；scripts/gen_openapi.py 生成 OpenAPI。修复 retriever 一跳扩展会话接线缺口（expander 改为按调用 session 构造的 factory）。新增 63 个测试，总计 256 passed，门禁全绿（ruff/mypy 0 errors）。真实容器端到端验收测试文档交付用户实测。
+
+---
+
+### 39. build: 补充 python-multipart 依赖与 API/任务队列配置字段
+
+- **提交时间**：2026-06-10 09:00
+- **说明**：`pyproject.toml` 新增 `python-multipart`（FastAPI UploadFile 依赖）。`Settings` 新增 API/上传段（cors_origins / rate_limit_per_minute / upload_max_bytes / upload_allowed_types）与任务队列段（task_stream_index / task_stream_dlq / task_consumer_group / task_consumer_name / task_max_retries / task_block_ms），附 `allowed_types` / `cors_origin_list` 解析属性。`.env.example` 同步补充。单测覆盖新字段默认值与解析。
+- **变更文件**：`pyproject.toml`、`uv.lock`、`src/knowflow/core/config.py`、`.env.example`、`tests/unit/test_config.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-10T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-10T09:00:00+08:00"
+git add pyproject.toml uv.lock src/knowflow/core/config.py .env.example tests/unit/test_config.py
+git commit -m "build: 补充 python-multipart 依赖与 API/任务队列配置字段"
+```
+
+---
+
+### 40. feat(schemas): 实现 API 请求响应 Schema 层
+
+- **提交时间**：2026-06-10 11:00
+- **说明**：`schemas/` 9 个文件：common（统一响应信封 `{code,message,data}` + 分页 `PageResponse`，PEP 695 泛型 + ErrorResponse）、document（UploadResponse/DocumentInfo/ReindexResponse/DeleteResponse）、knowledge（SearchRequest/SearchResponse/ChunkResult，对齐 retriever RetrievalResult）、chat（ChatRequest/ChatResponse/Citation）、agent/tool/memory/trace/eval（对齐各 models 与后续里程碑）。字段命名与 models 一致。
+- **变更文件**：`src/knowflow/schemas/common.py`、`src/knowflow/schemas/document.py`、`src/knowflow/schemas/knowledge.py`、`src/knowflow/schemas/chat.py`、`src/knowflow/schemas/agent.py`、`src/knowflow/schemas/tool.py`、`src/knowflow/schemas/memory.py`、`src/knowflow/schemas/trace.py`、`src/knowflow/schemas/eval.py`、`tests/unit/api/__init__.py`、`tests/unit/api/test_schemas.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-10T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-10T11:00:00+08:00"
+git add src/knowflow/schemas/common.py src/knowflow/schemas/document.py src/knowflow/schemas/knowledge.py src/knowflow/schemas/chat.py src/knowflow/schemas/agent.py src/knowflow/schemas/tool.py src/knowflow/schemas/memory.py src/knowflow/schemas/trace.py src/knowflow/schemas/eval.py tests/unit/api/__init__.py tests/unit/api/test_schemas.py
+git commit -m "feat(schemas): 实现 API 请求响应 Schema 层"
+```
+
+---
+
+### 41. fix(retrieval): 修复 retriever 一跳扩展会话接线
+
+- **提交时间**：2026-06-10 14:00
+- **说明**：M2 retriever 的 expand 块创建了独立 session 但 expander 用的是构造时持有的 session，真实接线下该 session 可能已关闭，且多次检索共用一个过期 session。改为注入 `expander_factory: Callable[[AsyncSession], Expander]`，在每次检索的 expand 块内按当次 session 构造 expander。rerank 块本就用当次 session（无需改）。同步更新 test_retriever.py 用 lambda 注入 FakeExpander。该缺口在 M3 接知识检索 endpoint 时暴露。
+- **变更文件**：`src/knowflow/retrieval/retriever.py`、`tests/unit/retrieval/test_retriever.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-10T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-10T14:00:00+08:00"
+git add src/knowflow/retrieval/retriever.py tests/unit/retrieval/test_retriever.py
+git commit -m "fix(retrieval): 修复 retriever 一跳扩展会话接线"
+```
+
+---
+
+### 42. feat(db): 为 DocumentRepo 补充 count_by_user 分页计数
+
+- **提交时间**：2026-06-10 15:30
+- **说明**：文档列表端点分页响应需要 total，DocumentRepo 原仅 list_by_user 无计数。新增 `count_by_user(user_id)` 用 `func.count()` 统计，供 document_service.list 返回 total。
+- **变更文件**：`src/knowflow/db/repositories/document_repo.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-10T15:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-10T15:30:00+08:00"
+git add src/knowflow/db/repositories/document_repo.py
+git commit -m "feat(db): 为 DocumentRepo 补充 count_by_user 分页计数"
+```
+
+---
+
+### 43. feat(tasks): 实现 Redis Stream 任务队列与索引任务
+
+- **提交时间**：2026-06-11 09:00
+- **说明**：`tasks/broker.py` 基于 redis.asyncio 封装 TaskBroker：enqueue（XADD MAXLEN 限流）、ensure_group（XGROUP CREATE，BUSYGROUP 忽略）、consume（XREADGROUP >）、ack（XACK）、send_to_dlq（死信流转）。payload JSON 编码进单字段。`tasks/index_task.py` 提供 `build_index_deps`（从全局单例组装 IndexDeps）与 `handle_index_task`（每任务独立 session，调 pipeline.index/reindex，NotFoundError 不可重试、IndexError 可重试）。不引入 Celery：单一索引任务类型用 Redis Stream 原生足够。单测用 FakeRedisStream 验证投递/消费/ack/不重复投递/DLQ，index_task 单测 patch get_session_factory + fake 组件验证成功/未找到/缺 doc_id/失败可重试。
+- **变更文件**：`src/knowflow/tasks/broker.py`、`src/knowflow/tasks/index_task.py`、`tests/fakes.py`、`tests/unit/tasks/__init__.py`、`tests/unit/tasks/test_broker.py`、`tests/unit/tasks/test_index_task.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-11T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-11T09:00:00+08:00"
+git add src/knowflow/tasks/broker.py src/knowflow/tasks/index_task.py tests/fakes.py tests/unit/tasks/__init__.py tests/unit/tasks/test_broker.py tests/unit/tasks/test_index_task.py
+git commit -m "feat(tasks): 实现 Redis Stream 任务队列与索引任务"
+```
+
+---
+
+### 44. feat(services): 实现文档管理服务
+
+- **提交时间**：2026-06-11 11:00
+- **说明**：`services/document_service.py` 编排文档全生命周期。upload：校验扩展名/大小 → sha256 去重（命中返回 duplicated 不重复存储/索引）→ MinIO put_object（asyncio.to_thread 包同步客户端）→ DocumentRepo.create(pending) → commit → broker.enqueue index 任务。list 分页（list_by_user + count_by_user）。delete：best-effort 清理向量/BM25/MinIO 对象 → 删 DB（级联 chunks/entities/relations）。reindex：状态置 pending → 投递 reindex 任务。单测用 SQLite + FakeMinio/FakeBroker 覆盖上传/去重/坏类型/超大/分页/删除/未找到/reindex。
+- **变更文件**：`src/knowflow/services/document_service.py`、`tests/unit/services/__init__.py`、`tests/unit/services/test_document_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-11T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-11T11:00:00+08:00"
+git add src/knowflow/services/document_service.py tests/unit/services/__init__.py tests/unit/services/test_document_service.py
+git commit -m "feat(services): 实现文档管理服务"
+```
+
+---
+
+### 45. feat(api): 实现依赖注入中间件与 SSE 封装
+
+- **提交时间**：2026-06-11 14:00
+- **说明**：`api/deps.py` 集中依赖：get_db（重导出）、Settings/Redis/Minio/Broker/Retriever/User Dep（Annotated），`get_retriever` 懒加载单例接线 GraphRAGRetriever（共享 VectorStore/BM25Store/EmbeddingClient/Reranker/Cache，expander_factory 按调用构造），`set_retriever`/`dispose_retriever` 供测试覆盖。`api/middleware.py`：RequestContextMiddleware（生成/透传 X-Request-Id，绑定 structlog，访问日志）、RateLimitMiddleware（Redis 固定窗口每 IP 每分钟，健康路径豁免，Redis 不可用降级放行，超限直接返回 429——中间件异常不被 exception_handler 捕获）。`api/sse.py`：生产者任务+队列解耦的心跳封装，心跳超时不取消业务生成器在途 await（避免 LLM 流式被误杀）。conftest 加 client fixture（覆盖 get_db 为 SQLite、redis/minio/broker/retriever 为 fake，不触发 lifespan）。单测覆盖请求 ID 生成/透传、限流阈值/降级/健康豁免、SSE 事件编码/心跳。
+- **变更文件**：`src/knowflow/api/deps.py`、`src/knowflow/api/middleware.py`、`src/knowflow/api/sse.py`、`tests/conftest.py`、`tests/unit/api/test_middleware.py`、`tests/unit/api/test_sse.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-11T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-11T14:00:00+08:00"
+git add src/knowflow/api/deps.py src/knowflow/api/middleware.py src/knowflow/api/sse.py tests/conftest.py tests/unit/api/test_middleware.py tests/unit/api/test_sse.py
+git commit -m "feat(api): 实现依赖注入中间件与 SSE 封装"
+```
+
+---
+
+### 46. feat(api): 实现 v1 端点与路由聚合
+
+- **提交时间**：2026-06-11 16:00
+- **说明**：9 个 v1 端点模块。health（/healthz 存活 + /readyz 就绪，探测 PG/Redis/Milvus/MinIO 连通性，任一不可用标记 degraded）、document（upload/list/delete/reindex 全实现，Annotated 依赖注入）、knowledge（search 全实现，调 retriever.retrieve 返回 ChunkResult）为 M3 完整功能；chat/agent/skill/memory/trace/eval 占位返回 501 并标注实现里程碑（P5-P10）。`api/v1/router.py` 聚合 9 个端点，`api/router.py` 挂载 v1。端点单测经 client fixture（依赖覆盖）验证上传/去重/坏类型/列表/删除/未找到/reindex、检索返回/空 query 校验/flags 透传、占位 501。`tests/integration/test_index_pipeline.py` 在 SQLite+fake 上跑通 HTTP 上传→入队→worker 消费→文档 ready 全链路。
+- **变更文件**：`src/knowflow/api/router.py`、`src/knowflow/api/v1/router.py`、`src/knowflow/api/v1/endpoints/health.py`、`src/knowflow/api/v1/endpoints/document.py`、`src/knowflow/api/v1/endpoints/knowledge.py`、`src/knowflow/api/v1/endpoints/chat.py`、`src/knowflow/api/v1/endpoints/agent.py`、`src/knowflow/api/v1/endpoints/skill.py`、`src/knowflow/api/v1/endpoints/memory.py`、`src/knowflow/api/v1/endpoints/trace.py`、`src/knowflow/api/v1/endpoints/eval.py`、`tests/unit/api/test_health_endpoint.py`、`tests/unit/api/test_document_endpoint.py`、`tests/unit/api/test_knowledge_endpoint.py`、`tests/unit/api/test_stub_endpoints.py`、`tests/integration/test_index_pipeline.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-11T16:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-11T16:00:00+08:00"
+git add src/knowflow/api/router.py src/knowflow/api/v1/router.py src/knowflow/api/v1/endpoints/health.py src/knowflow/api/v1/endpoints/document.py src/knowflow/api/v1/endpoints/knowledge.py src/knowflow/api/v1/endpoints/chat.py src/knowflow/api/v1/endpoints/agent.py src/knowflow/api/v1/endpoints/skill.py src/knowflow/api/v1/endpoints/memory.py src/knowflow/api/v1/endpoints/trace.py src/knowflow/api/v1/endpoints/eval.py tests/unit/api/test_health_endpoint.py tests/unit/api/test_document_endpoint.py tests/unit/api/test_knowledge_endpoint.py tests/unit/api/test_stub_endpoints.py tests/integration/test_index_pipeline.py
+git commit -m "feat(api): 实现 v1 端点与路由聚合"
+```
+
+---
+
+### 47. feat(api): 挂载路由中间件与统一异常处理
+
+- **提交时间**：2026-06-11 17:30
+- **说明**：`main.py` create_app 装配：CORS（allow_origins 取 settings.cors_origin_list）、RateLimitMiddleware、RequestContextMiddleware（添加顺序使请求 ID 最先执行）、include_router(api_router, prefix=api_prefix)、保留根 /health 与 / 兼容旧客户端、注册 AppError 异常处理器（转 ErrorResponse JSON，状态码取 exc.status_code）。
+- **变更文件**：`src/knowflow/main.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-11T17:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-11T17:30:00+08:00"
+git add src/knowflow/main.py
+git commit -m "feat(api): 挂载路由中间件与统一异常处理"
+```
+
+---
+
+### 48. feat(worker): 实现索引 worker 消费进程
+
+- **提交时间**：2026-06-12 09:00
+- **说明**：`worker/settings.py` 的 WorkerSettings 从全局 Settings 派生索引 worker 参数（stream/dlq/group/consumer/max_retries/block_ms/batch_size）。`worker/main.py` 独立进程：setup_logging → init 依赖（PG/Redis/MinIO，Milvus 懒加载）→ ensure_group → 消费循环（XREADGROUP 阻塞 block_ms）。重试策略：任务失败可重试且 attempts+1 < max_retries 时重新入队（attempts+1），否则入 DLQ 并 ack。信号处理优雅退出（Windows add_signal_handler 不支持时 contextlib.suppress 降级）。`make worker` 入口已就绪。
+- **变更文件**：`worker/main.py`、`worker/settings.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-12T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-12T09:00:00+08:00"
+git add worker/main.py worker/settings.py
+git commit -m "feat(worker): 实现索引 worker 消费进程"
+```
+
+---
+
+### 49. feat(scripts): 添加 OpenAPI 文档生成脚本
+
+- **提交时间**：2026-06-12 10:30
+- **说明**：`scripts/gen_openapi.py` 从 create_app() 导出 openapi.json，支持 `--out` 指定路径，自动将 src/ 加入 sys.path 便于直接运行。验收实测：生成 37KB 文档，20 个路径（含 chat/document/knowledge/health/agent/skill/memory/trace/eval 全部 v1 端点）。
+- **变更文件**：`scripts/gen_openapi.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-12T10:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-12T10:30:00+08:00"
+git add scripts/gen_openapi.py
+git commit -m "feat(scripts): 添加 OpenAPI 文档生成脚本"
+```
+
+---
+
+### 50. docs(tests): 编写 API 与异步索引验收测试文档
+
+- **提交时间**：2026-06-12 11:30
+- **说明**：`docs/tests/指标测试-API与异步索引.md` 按 AGENTS.md 2.2 节要求编写，覆盖需真实容器+真实模型的端到端验收：前置条件（docker compose 四件套 + LLM/Embedding/Reranker 模型缓存 + init_db/init_milvus）、7 项测试用例（健康检查、真实 PDF 上传、索引状态流转 pending→indexing→ready、知识检索含缓存命中、reindex/delete、OpenAPI 生成、集成测试复跑），每项含步骤+预期+结果记录表（留空待用户填写）。备注已知限制：BM25 跨进程不共享（M2 内存索引取舍）、占位端点在后续里程碑实现、限流降级放行。
+- **变更文件**：`docs/tests/指标测试-API与异步索引.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-12T11:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-12T11:30:00+08:00"
+git add "docs/tests/指标测试-API与异步索引.md"
+git commit -m "docs(tests): 编写 API 与异步索引验收测试文档"
+```
+
+---
+
+### 51. docs: 更新提交日志
+
+- **提交时间**：2026-06-12 12:30
+- **说明**：记录 M3（P4）全部 12 个业务提交（39-50）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-12T12:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-12T12:30:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
