@@ -794,3 +794,69 @@ $env:GIT_COMMITTER_DATE = "2026-06-12T12:30:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+## M3 · 修复与改进（2026-06-13）
+
+**Phase 总览**：M3 代码检查后修复三个问题——readyz 对 Milvus 仅检查客户端已创建、未做真实连通探测（与 M1 init_engine 惰性连接修复同类风险）；上传入库后索引任务投递失败无补偿（文档滞留 pending 且同内容重传被 sha256 去重拦截，永远无法索引）；worker 重试入队/死信投递异常未捕获会直接中断消费循环。同步修正 MinIO put_object 的 content_type 为标准 MIME 类型、外提函数内内联 import。新增 8 个测试（health 2 / document_service 1 / worker 5），总计 264 passed，门禁全绿（ruff 0 errors / mypy 0 issues）。
+
+---
+
+### 52. fix(api): readyz 对 Milvus 增加真实连通探测
+
+- **提交时间**：2026-06-13 09:00
+- **说明**：readyz 原对 Milvus 仅调 `get_milvus()` 检查客户端已创建，而 `init_milvus()` 只构造 MilvusClient 不握手——Milvus 服务不可用时可能误报 ok（与 M1 修复的 init_engine 惰性连接误报同类风险）。改为调 `list_collections()` 真实访问一次，失败如实报 fail。同步补充两个单测（可达报 ok / 不可达报 fail）。
+- **变更文件**：`src/knowflow/api/v1/endpoints/health.py`、`tests/unit/api/test_health_endpoint.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-13T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-13T09:00:00+08:00"
+git add src/knowflow/api/v1/endpoints/health.py tests/unit/api/test_health_endpoint.py
+git commit -m "fix(api): readyz 对 Milvus 增加真实连通探测"
+```
+
+---
+
+### 53. fix(services): 上传投递失败回滚并修正 MinIO MIME 类型
+
+- **提交时间**：2026-06-13 10:00
+- **说明**：upload 原顺序为 commit 后再 enqueue，Redis 故障时投递失败但文档已落库（pending），同内容重传被 sha256 去重拦截返回 duplicated 导致永远无法索引。改为 flush 取 id → enqueue → commit，投递失败不提交（会话退出时回滚）并清理已写入的 MinIO 对象，保持上传原子性、支持同内容重传。顺带修正 `put_object` 的 content_type 由扩展名改为 mimetypes 标准 MIME（如 application/pdf），函数内内联 `import asyncio` 外提至模块顶部。新增投递失败回滚单测。
+- **变更文件**：`src/knowflow/services/document_service.py`、`tests/unit/services/test_document_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-13T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-13T10:00:00+08:00"
+git add src/knowflow/services/document_service.py tests/unit/services/test_document_service.py
+git commit -m "fix(services): 上传投递失败回滚并修正 MinIO MIME 类型"
+```
+
+---
+
+### 54. fix(worker): 重试入队与死信投递异常兜底
+
+- **提交时间**：2026-06-13 11:00
+- **说明**：`_process` 原在 requeue 的 enqueue/ack 与 send_to_dlq 失败时异常直接传播，导致 worker 主循环退出。改为 try/except 包裹：失败仅记录日志不中断消费循环，消息不 ack 留在 PEL 供人工审计。新增 5 个 worker 分支单测（成功 ack / 重试入队 attempts+1 / 超限入 DLQ / 入队失败兜底不中断 / 非预期异常视为可重试）。
+- **变更文件**：`worker/main.py`、`tests/unit/worker/__init__.py`、`tests/unit/worker/test_worker_main.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-13T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-13T11:00:00+08:00"
+git add worker/main.py tests/unit/worker/__init__.py tests/unit/worker/test_worker_main.py
+git commit -m "fix(worker): 重试入队与死信投递异常兜底"
+```
+
+---
+
+### 55. docs: 更新提交日志
+
+- **提交时间**：2026-06-13 12:00
+- **说明**：记录本次 M3 修复与改进的 3 个提交（52-54）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-13T12:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-13T12:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
