@@ -103,14 +103,21 @@ async def _process(broker: TaskBroker, ws: WorkerSettings, msg: object) -> None:
 
     if result["retryable"] and attempts + 1 < ws.max_retries:
         payload["attempts"] = attempts + 1
-        await broker.enqueue(ws.stream, payload)
-        await broker.ack(ws.stream, ws.group, msg_id)
-        logger.warning(
-            "worker.requeued", msg_id=msg_id, attempts=attempts + 1, doc_id=result["doc_id"]
-        )
+        try:
+            await broker.enqueue(ws.stream, payload)
+            await broker.ack(ws.stream, ws.group, msg_id)
+            logger.warning(
+                "worker.requeued", msg_id=msg_id, attempts=attempts + 1, doc_id=result["doc_id"]
+            )
+        except Exception as exc:
+            # 重试入队/ack 失败: 记录日志不中断消费循环; 消息留在 PEL 供人工审计
+            logger.error("worker.requeue_failed", msg_id=msg_id, error=str(exc))
     else:
-        await broker.send_to_dlq(ws.dlq_stream, msg_id, payload, reason="max retries exceeded")
-        await broker.ack(ws.stream, ws.group, msg_id)
+        try:
+            await broker.send_to_dlq(ws.dlq_stream, msg_id, payload, reason="max retries exceeded")
+            await broker.ack(ws.stream, ws.group, msg_id)
+        except Exception as exc:
+            logger.error("worker.dlq_failed", msg_id=msg_id, error=str(exc))
 
 
 def main() -> None:
