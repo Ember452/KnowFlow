@@ -43,7 +43,7 @@ async def readyz() -> ApiResponse[dict]:
     try:
         from knowflow.db.milvus import get_milvus
 
-        get_milvus()
+        get_milvus().list_collections()
         deps["milvus"] = "ok"
     except Exception as exc:
         deps["milvus"] = f"fail: {exc.__class__.__name__}"
