@@ -5,8 +5,11 @@
 重建: 状态置 pending → 投递 reindex 任务(worker 内部先清理再索引).
 """
 
+import asyncio
+import contextlib
 import hashlib
 import io
+import mimetypes
 import uuid
 from typing import Any
 
@@ -85,16 +88,15 @@ class DocumentService:
             )
 
         source_uri = self._source_uri(file_name)
+        content_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
         # MinIO 客户端为同步, 放线程池避免阻塞事件循环
-        import asyncio
-
         await asyncio.to_thread(
             self.minio.put_object,
             self.settings.minio_bucket,
             source_uri,
             io.BytesIO(content),
             len(content),
-            file_type,  # content_type 复用扩展名
+            content_type,
         )
 
         doc = await self._repo.create(
@@ -106,12 +108,21 @@ class DocumentService:
             content_hash=content_hash,
             status="pending",
         )
+        await self.session.flush()  # 先取 doc.id 用于投递, 提交留到投递成功之后
+        try:
+            await self.broker.enqueue(
+                self.settings.task_stream_index,
+                {"task": "index", "doc_id": doc.id, "attempts": 0},
+            )
+        except Exception:
+            # 投递失败: 不 commit(会话退出时回滚), 并清理已写入的 MinIO 对象,
+            # 保持上传原子性 —— 同内容重传可重新走完整流程
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(
+                    self.minio.remove_object, self.settings.minio_bucket, source_uri
+                )
+            raise
         await self.session.commit()
-
-        await self.broker.enqueue(
-            self.settings.task_stream_index,
-            {"task": "index", "doc_id": doc.id, "attempts": 0},
-        )
         logger.info("document.uploaded", doc_id=doc.id, file_name=file_name, size=len(content))
         return UploadResponse(doc_id=doc.id, title=doc.title, status=doc.status)
 
@@ -142,8 +153,6 @@ class DocumentService:
 
         # 删 MinIO 对象(best-effort)
         try:
-            import asyncio
-
             await asyncio.to_thread(
                 self.minio.remove_object, self.settings.minio_bucket, doc.source_uri
             )

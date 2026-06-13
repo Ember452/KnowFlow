@@ -1,5 +1,7 @@
 """DocumentService 单测 - upload/dedup/list/delete/reindex, 用 SQLite + fake MinIO/broker."""
 
+from typing import Any
+
 import pytest
 
 from knowflow.core.config import get_settings
@@ -62,6 +64,27 @@ async def test_upload_rejects_oversize(db_session) -> None:
     big = b"x" * (settings.upload_max_bytes + 1)
     with pytest.raises(ValidationError):
         await svc.upload("big.md", big, "u1")
+
+
+class _BoomBroker(FakeBroker):
+    """enqueue 抛异常的 broker, 模拟 Redis 短暂故障."""
+
+    async def enqueue(self, stream: str, payload: dict[str, Any], **_: Any) -> str:
+        raise ConnectionError("redis down")
+
+
+@pytest.mark.asyncio
+async def test_upload_rolls_back_when_enqueue_fails(db_session) -> None:
+    """投递失败: 文档不落库 + MinIO 对象被清理, 异常向上抛, 同内容可重传."""
+    minio = FakeMinio()
+    svc = _service(db_session, minio, _BoomBroker())
+    with pytest.raises(ConnectionError):
+        await svc.upload("n.md", b"x", "u1")
+    await db_session.rollback()  # 模拟 get_db 会话退出时的回滚
+    _items, total = await svc.list("u1")
+    assert total == 0
+    assert minio.objects == {}
+    assert minio.remove_calls  # 已清理 MinIO 对象
 
 
 @pytest.mark.asyncio
