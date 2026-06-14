@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -66,4 +67,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await _safe_init("minio", dispose_minio)
     await _safe_init("redis", dispose_redis)
     await _safe_init("postgres", dispose_engine)
+    _dispose_ai_singletons()
     logger.info("lifecycle.stopped")
+
+
+def _dispose_ai_singletons() -> None:
+    """释放 LLM/Embedding/Reranker 懒加载单例(未加载时无操作, 失败忽略)."""
+    with contextlib.suppress(Exception):
+        from knowflow.core.llm import dispose_chat_llm
+
+        dispose_chat_llm()
+    with contextlib.suppress(Exception):
+        from knowflow.retrieval.embedding import dispose_embedding_client
+
+        dispose_embedding_client()
+    with contextlib.suppress(Exception):
+        from knowflow.retrieval.reranker import dispose_reranker
+
+        dispose_reranker()
