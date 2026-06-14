@@ -61,6 +61,16 @@ def get_broker_dep() -> Any:
 BrokerDep = Annotated[Any, Depends(get_broker_dep)]
 
 
+def get_llm_dep() -> Any:
+    """ChatOpenAI 单例依赖(懒加载). 测试可覆盖为 fake."""
+    from knowflow.core.llm import get_chat_llm
+
+    return get_chat_llm()
+
+
+LlmDep = Annotated[Any, Depends(get_llm_dep)]
+
+
 def get_current_user(
     x_user_id: Annotated[str | None, Header()] = None,
 ) -> str:
