@@ -16,7 +16,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from knowflow.models import Base
-from tests.fakes import FakeBroker, FakeMinio, FakeRetriever
+from tests.fakes import FakeBroker, FakeChatLLM, FakeMinio, FakeRetriever
 
 
 @pytest_asyncio.fixture
@@ -90,6 +90,7 @@ def client(
     app.dependency_overrides[deps.get_redis_dep] = lambda: object()  # 占位, 中间件降级
     app.dependency_overrides[deps.get_minio_dep] = lambda: minio
     app.dependency_overrides[deps.get_broker_dep] = lambda: broker
+    app.dependency_overrides[deps.get_llm_dep] = lambda: FakeChatLLM()  # 对话端点用 fake LLM
     # retriever 走模块单例, 测试可 set_retriever 替换
     deps.set_retriever(FakeRetriever())
     app.dependency_overrides[deps.get_retriever] = lambda: deps.get_retriever()

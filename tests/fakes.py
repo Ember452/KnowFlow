@@ -3,7 +3,7 @@
 供 document_service / endpoint / broker / index_task 单测注入, 避免真实依赖.
 """
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -175,3 +175,31 @@ class FakeRetriever:
             latency_ms=1.0,
             cache_hit=False,
         )
+
+
+@dataclass
+class FakeChatLLM:
+    """fake LLM, 记录 ainvoke/astream 调用, 用于对话服务/端点单测.
+
+    astream 按 token_chunks 逐段产出; 注入 raise_on_stream 可测异常路径.
+    """
+
+    answer: str = "这是来自 KnowFlow 的回复。"
+    token_chunks: tuple[str, ...] = ("这是", "来自", "KnowFlow", "的回复。")
+    invoke_calls: int = 0
+    stream_calls: int = 0
+    last_messages: list[Any] = field(default_factory=list)
+    raise_on_stream: bool = False
+
+    async def ainvoke(self, messages: list[Any]) -> str:
+        self.invoke_calls += 1
+        self.last_messages = list(messages)
+        return self.answer
+
+    async def astream(self, messages: list[Any]) -> AsyncIterator[str]:
+        self.stream_calls += 1
+        self.last_messages = list(messages)
+        if self.raise_on_stream:
+            raise RuntimeError("fake llm stream failed")
+        for token in self.token_chunks:
+            yield token
