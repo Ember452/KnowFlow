@@ -860,3 +860,114 @@ $env:GIT_COMMITTER_DATE = "2026-06-13T12:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+## M4 · P5 · 对话链路与 SSE 流式（2026-06-14 ~ 2026-06-16）
+
+**Phase 总览**：打通最小可用问答闭环。`core/llm.py` 新增 ChatOpenAI 懒加载单例并接入生命周期释放（LLM/Embedding/Reranker 三大客户端统一懒加载）；`services/chat_service.py` 实现对话主流程——会话存在性检查 → 历史注入（最近 window_max_turns 轮全量）→ 消息入库 → 检索 → 组装 prompt（系统提示+历史+检索上下文）→ LLM 生成 → 消息/引用/轮次落库，同步 chat() 与流式 stream_events()（retrieval → token* → done，异常 yield error 事件并回滚）；chat 端点接入对话服务，/chat/stream 经 sse.py 心跳封装。新增 9 个单测（服务 6 + 端点 3，chat stub 501 用例移除），e2e 真实模型流式测试（无 Key 自动跳过）。门禁全绿：ruff 0 errors / mypy 0 issues / unit+integration 273 passed / pre-commit 全通过。首 token 基准与多轮验收按测试文档交付用户实测。
+
+---
+
+### 56. feat(core): 实现 LLM 客户端懒加载单例并接入生命周期释放
+
+- **提交时间**：2026-06-14 09:00
+- **说明**：`core/llm.py` 新增 ChatOpenAI 懒加载单例（`get_chat_llm` 首次调用按 Settings 构造，temperature=0.3 + streaming，api_key 用 SecretStr 包装兼容 langchain-openai 1.x），`set_chat_llm`/`dispose_chat_llm` 供测试注入与释放。`core/lifecycle.py` 关闭流程新增 `_dispose_ai_singletons()`：释放 LLM/Embedding/Reranker 三个懒加载单例（未加载时无操作，失败忽略），补齐 AI 客户端生命周期管理。
+- **变更文件**：`src/knowflow/core/llm.py`、`src/knowflow/core/lifecycle.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-14T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-14T09:00:00+08:00"
+git add src/knowflow/core/llm.py src/knowflow/core/lifecycle.py
+git commit -m "feat(core): 实现 LLM 客户端懒加载单例并接入生命周期释放"
+```
+
+---
+
+### 57. feat(services): 实现对话服务主流程（检索增强问答与流式生成）
+
+- **提交时间**：2026-06-14 11:00
+- **说明**：`services/chat_service.py` 实现无工具版对话主流程。链路：`_ensure_session`（校验/新建会话，非法 session_id 抛 ValidationError、不存在抛 NotFoundError）→ 历史注入（list_by_session 取最近 window_max_turns 轮 user/assistant）→ 用户消息入库 → retriever.retrieve → `_build_messages` 组装（系统提示注入检索上下文，逐段 [n] 编号 + 强制不编造 + 来源标注）→ LLM 生成。同步 `chat()` 用 ainvoke 返回 ChatResponse（answer+citations+latency_ms）；流式 `stream_events()` 用 astream 逐 token 转发 SSE 事件（retrieval 先回传召回结果 → token 事件 JSON 载荷规避 SSE 分帧换行问题 → done 含引用/耗时/token 数），异常回滚并 yield error 事件不中断连接。assistant 消息落库 citations JSON（content 截断 500 字符防膨胀），turns 表记录轮次。token 计数用 tiktoken（模型不支持回退字符/4 估算）。
+- **变更文件**：`src/knowflow/services/chat_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-14T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-14T11:00:00+08:00"
+git add src/knowflow/services/chat_service.py
+git commit -m "feat(services): 实现对话服务主流程（检索增强问答与流式生成）"
+```
+
+---
+
+### 58. feat(api): chat 端点接入对话服务与 SSE 事件流
+
+- **提交时间**：2026-06-14 14:00
+- **说明**：`api/deps.py` 新增 `get_llm_dep`/`LlmDep`（ChatOpenAI 单例依赖，测试可覆盖为 fake）。`api/v1/endpoints/chat.py` 替换 M3 占位：POST /chat 同步返回 ChatResponse；POST /chat/stream 构造 ChatService 后经 `sse_stream`（心跳+断连检测）包装为 EventSourceResponse。`tests/unit/api/test_stub_endpoints.py` 移除 chat 两个 501 用例（chat 已实现，保留 agent/skill/memory/trace/eval 占位断言）。
+- **变更文件**：`src/knowflow/api/deps.py`、`src/knowflow/api/v1/endpoints/chat.py`、`tests/unit/api/test_stub_endpoints.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-14T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-14T14:00:00+08:00"
+git add src/knowflow/api/deps.py src/knowflow/api/v1/endpoints/chat.py tests/unit/api/test_stub_endpoints.py
+git commit -m "feat(api): chat 端点接入对话服务与 SSE 事件流"
+```
+
+---
+
+### 59. test(chat): 添加对话服务与端点单测
+
+- **提交时间**：2026-06-15 09:00
+- **说明**：`tests/fakes.py` 新增 FakeChatLLM（ainvoke/astream 记录调用与最后消息，raise_on_stream 测异常路径）；`tests/conftest.py` client fixture 覆盖 get_llm_dep 为 FakeChatLLM。服务单测 6 个（SQLite+aiosqlite）：新建会话落库（消息/引用/轮次）、多轮复用注入历史、session 不存在 404、非法 session_id 422、流式事件序列 retrieval→token→done、异常 error 事件。端点单测 3 个（TestClient）：同步返回答案与引用、SSE 流式事件解析（retrieval/token/done 顺序 + citations）、LLM 异常 error 事件。
+- **变更文件**：`tests/fakes.py`、`tests/conftest.py`、`tests/unit/services/test_chat_service.py`、`tests/unit/api/test_chat_endpoint.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-15T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-15T09:00:00+08:00"
+git add tests/fakes.py tests/conftest.py tests/unit/services/test_chat_service.py tests/unit/api/test_chat_endpoint.py
+git commit -m "test(chat): 添加对话服务与端点单测"
+```
+
+---
+
+### 60. test(e2e): 添加真实模型对话流式端到端测试
+
+- **提交时间**：2026-06-15 11:00
+- **说明**：`tests/e2e/test_chat_stream_e2e.py`：无 LLM API Key 时整模块 skip。有 Key 时通过 client fixture（SQLite + FakeRetriever 固定知识片段）移除 get_llm_dep 覆盖走真实 ChatOpenAI，POST /chat/stream 断言 retrieval→token→done 事件序列、token 拼接回答非空、done 含 session_id 与 citations，并打印 first_token_ms 供 docs/benchmarks 记录首 token 基准（目标 < 800ms）。
+- **变更文件**：`tests/e2e/test_chat_stream_e2e.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-15T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-15T11:00:00+08:00"
+git add tests/e2e/test_chat_stream_e2e.py
+git commit -m "test(e2e): 添加真实模型对话流式端到端测试"
+```
+
+---
+
+### 61. docs(tests): 编写对话链路与 SSE 验收测试文档
+
+- **提交时间**：2026-06-15 14:00
+- **说明**：`docs/tests/指标测试-对话链路.md` 按 AGENTS.md 2.2 节要求编写：前置条件（docker compose 四件套 + LLM API Key + 依赖 M3 已索引文档）、启动步骤、6 项验收用例（同步对话、SSE 事件序列与心跳、多轮追问引用上文、首 token 基准 <800ms 记录 docs/benchmarks/、异常路径 error 事件/404/422、e2e 自动化）、已知限制（P7 前全量历史注入无压缩、无工具版、LLM 懒加载、citations JSON 结构、BM25 跨进程限制）、验收清单。
+- **变更文件**：`docs/tests/指标测试-对话链路.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-15T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-15T14:00:00+08:00"
+git add "docs/tests/指标测试-对话链路.md"
+git commit -m "docs(tests): 编写对话链路与 SSE 验收测试文档"
+```
+
+---
+
+### 62. docs: 更新提交日志
+
+- **提交时间**：2026-06-16 09:00
+- **说明**：记录 M4（P5）全部 6 个业务提交（56-61）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-16T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-16T09:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
