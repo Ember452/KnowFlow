@@ -41,6 +41,8 @@ secrets.yaml
 # ── IDE ──
 .idea/
 .vscode/
+.trae/
+.workbuddy/
 *.swp
 *.swo
 *~

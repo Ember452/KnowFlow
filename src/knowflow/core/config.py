@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 3600
     workspace_quota_bytes: int = 104857600  # 100MB
 
+    # ── 工具治理 ──
+    skills_dir: str = "skills"  # Skill 声明式定义目录(SKILL.md)
+    max_tool_rounds: int = 5  # 工具调用最大轮数
+
     # ── API 与上传 ──
     cors_origins: str = "*"  # 逗号分隔; dev 放开, prod 收紧
     rate_limit_per_minute: int = 60  # 每 IP 每分钟请求上限
