@@ -136,3 +136,56 @@ def dispose_retriever() -> None:
 
 
 RetrieverDep = Annotated[Any, Depends(get_retriever)]
+
+
+# ── Skill 管理器与工具注册表(懒加载单例, 测试可覆盖) ──
+
+_skill_manager: Any = None
+_tool_registry: Any = None
+
+
+def get_skill_manager() -> Any:
+    """SkillManager 单例: 加载 skills/ 目录下 SKILL.md 并维护运行时启停状态."""
+    global _skill_manager
+    if _skill_manager is not None:
+        return _skill_manager
+    from knowflow.tools.skill_manager import SkillManager
+
+    _skill_manager = SkillManager()
+    logger.info("deps.skill_manager_initialized")
+    return _skill_manager
+
+
+def set_skill_manager(manager: Any) -> None:
+    """测试注入 SkillManager."""
+    global _skill_manager
+    _skill_manager = manager
+
+
+def get_tool_registry() -> Any:
+    """ToolRegistry 单例: 注册全部内置工具(检索/文件/搜索/计算器)."""
+    global _tool_registry
+    if _tool_registry is not None:
+        return _tool_registry
+    from knowflow.tools.builtin import build_default_registry
+
+    _tool_registry = build_default_registry()
+    logger.info("deps.tool_registry_initialized")
+    return _tool_registry
+
+
+def set_tool_registry(registry: Any) -> None:
+    """测试注入 ToolRegistry."""
+    global _tool_registry
+    _tool_registry = registry
+
+
+def dispose_tools() -> None:
+    """释放工具治理单例."""
+    global _skill_manager, _tool_registry
+    _skill_manager = None
+    _tool_registry = None
+
+
+SkillManagerDep = Annotated[Any, Depends(get_skill_manager)]
+ToolRegistryDep = Annotated[Any, Depends(get_tool_registry)]

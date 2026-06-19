@@ -1,6 +1,6 @@
-"""占位端点单测 - agent/skill/memory/trace/eval 返回 501 并标注里程碑.
+"""占位端点单测 - agent/memory/trace/eval 返回 501 并标注里程碑.
 
-chat 端点已在 P5(M4) 实现, 见 test_chat_endpoint.py.
+chat 端点已在 P5(M4) 实现, skill 端点已在 P6(M5) 实现, 见对应测试文件.
 """
 
 from fastapi.testclient import TestClient
@@ -8,11 +8,6 @@ from fastapi.testclient import TestClient
 
 def test_agent_stub_501(client: TestClient) -> None:
     assert client.get("/api/v1/agents/runs/1").status_code == 501
-
-
-def test_skill_stub_501(client: TestClient) -> None:
-    assert client.get("/api/v1/skills").status_code == 501
-    assert client.put("/api/v1/skills/foo/toggle").status_code == 501
 
 
 def test_memory_stub_501(client: TestClient) -> None:
