@@ -94,10 +94,24 @@ def client(
     # retriever 走模块单例, 测试可 set_retriever 替换
     deps.set_retriever(FakeRetriever())
     app.dependency_overrides[deps.get_retriever] = lambda: deps.get_retriever()
+    # Skill 管理器: 每个 client 一个全新实例, 避免 toggle 状态跨用例泄漏
+    from knowflow.tools.skill_manager import SkillManager
+
+    deps.set_skill_manager(SkillManager())
+    app.dependency_overrides[deps.get_skill_manager] = lambda: deps.get_skill_manager()
+    # 工具注册表: 用 fake 检索器 + fake minio 构造, 避免依赖真实容器
+    from knowflow.sandbox.workspace import WorkspaceManager
+    from knowflow.tools.builtin import build_default_registry
+
+    deps.set_tool_registry(
+        build_default_registry(retriever=FakeRetriever(), workspace_manager=WorkspaceManager(minio))
+    )
+    app.dependency_overrides[deps.get_tool_registry] = lambda: deps.get_tool_registry()
 
     yield TestClient(app)
 
     deps.dispose_retriever()
+    deps.dispose_tools()
 
 
 @pytest.fixture
