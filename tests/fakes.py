@@ -9,8 +9,44 @@ from typing import Any
 
 
 @dataclass
+class FakeMinioObject:
+    """FakeMinio 对象元信息(对齐 minio.list_objects/stat_object 返回)."""
+
+    object_name: str
+    size: int
+    content_type: str = "application/octet-stream"
+
+
+class _FakeObjectStream:
+    """FakeMinio get_object 返回的可读流(对齐 urllib3 响应接口)."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._read = False
+
+    def read(self) -> bytes:
+        if self._read:
+            return b""
+        self._read = True
+        return self._data
+
+    def stream(self, *_a: Any, **_kw: Any) -> Any:
+        yield self._data
+
+    def close(self) -> None:
+        pass
+
+    def release_conn(self) -> None:
+        pass
+
+
+@dataclass
 class FakeMinio:
-    """记录 put_object / remove_object / fget_object 调用."""
+    """记录 put_object / remove_object / fget_object 调用.
+
+    支持沙盒后端所需: put/get/list/remove/stat. objects 字段为对象全量内容,
+    list_objects 按 prefix 过滤返回 FakeMinioObject.
+    """
 
     put_calls: list[tuple[str, str, bytes]] = field(default_factory=list)
     remove_calls: list[str] = field(default_factory=list)
@@ -32,6 +68,24 @@ class FakeMinio:
         with open(file_path, "wb") as f:
             f.write(self.objects.get(name, b""))
         return None
+
+    def get_object(self, bucket: str, name: str) -> _FakeObjectStream:
+        if name not in self.objects:
+            raise KeyError(f"object not found: {name}")
+        return _FakeObjectStream(self.objects[name])
+
+    def list_objects(
+        self, bucket: str, prefix: str | None = None, recursive: bool = False
+    ) -> list[FakeMinioObject]:
+        names = sorted(self.objects)
+        if prefix:
+            names = [n for n in names if n.startswith(prefix)]
+        return [FakeMinioObject(object_name=n, size=len(self.objects[n])) for n in names]
+
+    def stat_object(self, bucket: str, name: str) -> FakeMinioObject:
+        if name not in self.objects:
+            raise KeyError(f"object not found: {name}")
+        return FakeMinioObject(object_name=name, size=len(self.objects[name]))
 
     def bucket_exists(self, bucket: str) -> bool:
         return True
@@ -203,3 +257,40 @@ class FakeChatLLM:
             raise RuntimeError("fake llm stream failed")
         for token in self.token_chunks:
             yield token
+
+
+@dataclass
+class _ScriptedResponse:
+    """FakeToolCallingLLM 单次响应: 含 content 与可选 tool_calls(dict, 对齐 langchain)."""
+
+    content: str = ""
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+
+
+class FakeToolCallingLLM:
+    """支持 bind_tools 与 tool_calls 的 fake LLM, 用于 ToolOrchestrator 单测.
+
+    按脚本顺序返回响应: 先返回带 tool_calls 的响应, 工具结果回填后返回最终 content.
+    bind_tools 记录注入的工具定义, 便于断言可见工具集. tool_calls 为 dict 列表
+    (含 name/args/id), 对齐 langchain AIMessage.tool_calls 格式.
+    """
+
+    def __init__(self, script: list[_ScriptedResponse]) -> None:
+        self._script = list(script)
+        self._idx = 0
+        self.bound_tools: list[Any] = []
+        self.invoke_calls = 0
+        self.last_messages: list[Any] = []
+
+    def bind_tools(self, tools: list[Any]) -> "FakeToolCallingLLM":
+        self.bound_tools = list(tools)
+        return self
+
+    async def ainvoke(self, messages: list[Any]) -> _ScriptedResponse:
+        self.invoke_calls += 1
+        self.last_messages = list(messages)
+        if self._idx >= len(self._script):
+            return _ScriptedResponse(content="(脚本已耗尽)")
+        resp = self._script[self._idx]
+        self._idx += 1
+        return resp
