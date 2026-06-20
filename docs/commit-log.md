@@ -971,3 +971,264 @@ $env:GIT_COMMITTER_DATE = "2026-06-16T09:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+## M5 · P6 + P9 · 工具治理与沙盒文件系统（2026-06-17 ~ 2026-06-20）
+
+**Phase 总览**：完成工具治理体系（P6）与沙盒文件系统（P9）全部建设。P9 沙盒层实现会话级 workspace 隔离——虚拟路径映射（`/workspace/x.json` ↔ MinIO key）、访问控制（拦截 `../`/绝对路径/跨会话）、MinIO 后端 CRUD（asyncio.to_thread 包同步客户端）、配额管理（默认 100MB）、文件操作编排（校验→映射→配额→后端）、工作区生命周期（创建/清理/TTL）。P6 工具治理实现四类执行域隔离（direct 恒可见 / skill_only 按激活 / subagent_only 按角色 / internal 永不可见）——BaseTool 抽象 + ToolRegistry 注册表 + SkillDefinition 声明式加载（YAML frontmatter 解析）+ 依赖拓扑排序 + VisibilityCalculator 可见性计算 + Injector JSON Schema 注入 + Permission 越权拦截 + ToolMetrics 指标收集；4 个内置工具（calculator/retrieval_tool/file_tools/search_tool）+ 4 个 Skill（knowledge_qa/document_summary/data_analysis/code_review）+ ToolOrchestrator 工具调用循环（Skill 激活→可见性计算→注入→LLM bind_tools→工具调用→结果回填→继续生成，最大 5 轮）。skill 端点接入 SkillManager 实现列表/启停。指标脚本 benchmark_tools.py 静态模式三项指标均达标：可见工具数 -43.4%（目标 -34.2%）、Schema Token -45.2%（目标 -32.6%）、FC 准确率 100.0%（目标 94+%）。新增 101 个单测，总计 374 passed，覆盖率 87%，门禁全绿（ruff/mypy 0 errors / pre-commit 全通过）。
+
+---
+
+### 63. build: 补充 mypy_path 与工具治理配置字段
+
+- **提交时间**：2026-06-17 09:00
+- **说明**：pre-commit 的 mypy hook 用 `--explicit-package-bases` 解析 src 布局，缺 `mypy_path` 导致新增模块的类型标注被解析为 Any，触发 `no-any-return` 误报。在 `[tool.mypy]` 补充 `mypy_path = "src"` 使 mypy 正确解析 knowflow 顶层包。`core/config.py` 新增 `skills_dir`（默认 "skills"）与 `max_tool_rounds`（默认 5）配置字段，供后续 SkillManager 与 ToolOrchestrator 使用（提前提交避免增量提交时 mypy 跨文件依赖报错）。`.gitignore` 补充 `.trae/` / `.workbuddy/` IDE 产物忽略规则。
+- **变更文件**：`pyproject.toml`、`.gitignore`、`src/knowflow/core/config.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-17T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-17T09:00:00+08:00"
+git add pyproject.toml .gitignore src/knowflow/core/config.py
+git commit -m "build: 补充 mypy_path 与工具治理配置字段"
+```
+
+---
+
+### 64. feat(sandbox): 实现虚拟路径映射与访问控制
+
+- **提交时间**：2026-06-17 10:30
+- **说明**：`virtual_path.py` 实现会话级虚拟路径映射（`/workspace/x.json` ↔ MinIO key `sessions/{sid}/workspace/x.json`），`to_real`/`to_virtual` 双向转换，`session_prefix` 供清理使用。`access_control.py` 实现路径安全校验：拦截 `../` 路径穿越、绝对路径、跨会话前缀访问，仅放行 `/workspace/` 下当前会话路径，校验失败抛 ValidationError。
+- **变更文件**：`src/knowflow/sandbox/virtual_path.py`、`src/knowflow/sandbox/access_control.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-17T10:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-17T10:30:00+08:00"
+git add src/knowflow/sandbox/virtual_path.py src/knowflow/sandbox/access_control.py
+git commit -m "feat(sandbox): 实现虚拟路径映射与访问控制"
+```
+
+---
+
+### 65. feat(sandbox): 实现 MinIO 存储后端与配额管理
+
+- **提交时间**：2026-06-17 14:00
+- **说明**：`minio_backend.py` 封装 MinIO 对象 CRUD（write/read/list/delete/exists/stat），同步客户端经 `asyncio.to_thread` 避免阻塞事件循环，read 自动关闭 response 释放连接。`quota.py` 实现单会话配额管理：写入前校验已用 + 新增 ≤ workspace_quota_bytes（默认 100MB），超限抛 ValidationError，用量按对象 size 求和统计。
+- **变更文件**：`src/knowflow/sandbox/minio_backend.py`、`src/knowflow/sandbox/quota.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-17T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-17T14:00:00+08:00"
+git add src/knowflow/sandbox/minio_backend.py src/knowflow/sandbox/quota.py
+git commit -m "feat(sandbox): 实现 MinIO 存储后端与配额管理"
+```
+
+---
+
+### 66. feat(sandbox): 实现文件操作与工作区生命周期管理
+
+- **提交时间**：2026-06-17 16:00
+- **说明**：`file_ops.py` 编排文件操作统一流程：AccessControl 校验 → VirtualPathMapper 映射 → (写入时) Quota 校验 → MinioBackend 执行，提供 read/write/list/delete/exists 接口，对工具暴露虚拟路径。`workspace.py` 的 WorkspaceManager 为每个会话产出 FileOps 实例（绑定 session_id 与配额），cleanup 按前缀列出删除全部对象。`lifecycle.py` 包装批量清理，单会话失败不阻塞其余。
+- **变更文件**：`src/knowflow/sandbox/file_ops.py`、`src/knowflow/sandbox/workspace.py`、`src/knowflow/sandbox/lifecycle.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-17T16:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-17T16:00:00+08:00"
+git add src/knowflow/sandbox/file_ops.py src/knowflow/sandbox/workspace.py src/knowflow/sandbox/lifecycle.py
+git commit -m "feat(sandbox): 实现文件操作与工作区生命周期管理"
+```
+
+---
+
+### 67. test(sandbox): 添加沙盒文件系统单测
+
+- **提交时间**：2026-06-17 17:30
+- **说明**：单测覆盖沙盒文件系统全部核心路径：虚拟路径双向映射、路径穿越拦截（`../`/绝对路径/跨会话）、MinIO 后端 CRUD（FakeMinio 内存桩）、配额校验与超限拒绝、FileOps 读写列表删除、WorkspaceManager 创建与清理。安全用例重点验证 `write("../../etc/passwd")` 被拦截、会话 A 无法访问会话 B 文件。
+- **变更文件**：`tests/unit/sandbox/test_sandbox.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-17T17:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-17T17:30:00+08:00"
+git add tests/unit/sandbox/test_sandbox.py
+git commit -m "test(sandbox): 添加沙盒文件系统单测"
+```
+
+---
+
+### 68. feat(tools): 实现 BaseTool 抽象与工具注册表
+
+- **提交时间**：2026-06-18 09:00
+- **说明**：`base.py` 定义 `BaseTool` 抽象基类（name/description/domain/input_schema/execute）与 `ToolResult` 数据类（tool_name/success/output/error/latency_ms/token_usage），统一工具返回结构。`registry.py` 实现 `ToolRegistry`：register 注册工具、get 按名查询、list_all 全量列出、list_by_domain 按执行域过滤，注册时记录日志。
+- **变更文件**：`src/knowflow/tools/base.py`、`src/knowflow/tools/registry.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-18T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-18T09:00:00+08:00"
+git add src/knowflow/tools/base.py src/knowflow/tools/registry.py
+git commit -m "feat(tools): 实现 BaseTool 抽象与工具注册表"
+```
+
+---
+
+### 69. feat(tools): 定义执行域与 Skill 声明式加载与依赖解析
+
+- **提交时间**：2026-06-18 10:30
+- **说明**：`domain.py` 定义四类执行域（DIRECT/SKILL_ONLY/SUBAGENT_ONLY/INTERNAL）与 AgentRole（MAIN/SUBAGENT），提供 `visible_domains_for`/`filter_skills_by_role` 按角色过滤。`skill_schema.py` 定义 SkillDefinition Pydantic 模型（name/description/tools/dependencies/domain/enabled），name 去空白校验、tools/dependencies 去重保序。`skill_loader.py` 解析 SKILL.md YAML frontmatter → SkillDefinition，校验 frontmatter 闭合/YAML 合法/工具名合法，load_dir 单个失败不阻塞其余。`dependency_resolver.py` 实现依赖拓扑排序 + 循环检测 + 缺失依赖报告。
+- **变更文件**：`src/knowflow/tools/domain.py`、`src/knowflow/tools/skill_schema.py`、`src/knowflow/tools/skill_loader.py`、`src/knowflow/tools/dependency_resolver.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-18T10:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-18T10:30:00+08:00"
+git add src/knowflow/tools/domain.py src/knowflow/tools/skill_schema.py src/knowflow/tools/skill_loader.py src/knowflow/tools/dependency_resolver.py
+git commit -m "feat(tools): 定义执行域与 Skill 声明式加载与依赖解析"
+```
+
+---
+
+### 70. feat(tools): 实现可见性计算/注入/权限/指标收集
+
+- **提交时间**：2026-06-18 14:00
+- **说明**：`visibility.py` 的 VisibilityCalculator 按执行域隔离计算可见工具集：direct 恒可见 + skill_only 按 Skill 激活(含 dependencies) + subagent_only 按角色 + internal 永不可见，多 Skill 引用同一工具去重。`injector.py` 按可见集构建 LLM tools 参数（JSON Schema 注入），schema_tokens 估算 Token 量（字符数/4）。`permission.py` 运行时越权拦截：工具不在可见集中时拒绝并报错。`metrics.py` 的 ToolMetrics 记录每次调用（成功/失败/耗时/可见数/Token），提供 call_stats 统计与 snapshot 快照。
+- **变更文件**：`src/knowflow/tools/visibility.py`、`src/knowflow/tools/injector.py`、`src/knowflow/tools/permission.py`、`src/knowflow/tools/metrics.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-18T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-18T14:00:00+08:00"
+git add src/knowflow/tools/visibility.py src/knowflow/tools/injector.py src/knowflow/tools/permission.py src/knowflow/tools/metrics.py
+git commit -m "feat(tools): 实现可见性计算/注入/权限/指标收集"
+```
+
+---
+
+### 71. feat(tools): 实现内置工具与 Skill 管理器
+
+- **提交时间**：2026-06-18 16:00
+- **说明**：4 个内置工具：`calculator.py`（direct 域，AST 安全求值，白名单节点拦截名称/属性访问，超长/空表达式拒绝）、`retrieval_tool.py`（direct 域，调 retriever 返回片段，content 截断 500 字符）、`file_tools.py`（skill_only 域，FileReadTool/FileWriteTool/FileListTool 走沙盒 FileOps）、`search_tool.py`（subagent_only 域，duckduckgo-search 网络搜索，依赖未装返回失败）。`builtin/__init__.py` 的 build_default_registry 组装全部工具。`skill_manager.py` 的 SkillManager 加载 SKILL.md 目录并维护运行时启停状态（进程内），active_skills 同步运行时 enabled 供可见性计算，list/toggle/get 接口。
+- **变更文件**：`src/knowflow/tools/builtin/calculator.py`、`src/knowflow/tools/builtin/retrieval_tool.py`、`src/knowflow/tools/builtin/file_tools.py`、`src/knowflow/tools/builtin/search_tool.py`、`src/knowflow/tools/builtin/__init__.py`、`src/knowflow/tools/skill_manager.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-18T16:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-18T16:00:00+08:00"
+git add src/knowflow/tools/builtin/calculator.py src/knowflow/tools/builtin/retrieval_tool.py src/knowflow/tools/builtin/file_tools.py src/knowflow/tools/builtin/search_tool.py src/knowflow/tools/builtin/__init__.py src/knowflow/tools/skill_manager.py
+git commit -m "feat(tools): 实现内置工具与 Skill 管理器"
+```
+
+---
+
+### 72. feat(skills): 添加 4 个 Skill 声明定义
+
+- **提交时间**：2026-06-18 17:30
+- **说明**：4 个 Skill 的 SKILL.md 声明式定义（YAML frontmatter + 正文）：knowledge_qa（知识问答，tools: retrieval_tool，skill_only 域）、document_summary（文档摘要，tools: retrieval_tool + file_write_tool，skill_only 域）、data_analysis（数据分析，tools: calculator + file_read/write/list_tool，skill_only 域）、code_review（代码审查，tools: file_read_tool + search_tool，subagent_only 域）。正文含使用场景与调用示例，供 SkillManager 加载。
+- **变更文件**：`skills/knowledge_qa/SKILL.md`、`skills/document_summary/SKILL.md`、`skills/data_analysis/SKILL.md`、`skills/code_review/SKILL.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-18T17:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-18T17:30:00+08:00"
+git add skills/knowledge_qa/SKILL.md skills/document_summary/SKILL.md skills/data_analysis/SKILL.md skills/code_review/SKILL.md
+git commit -m "feat(skills): 添加 4 个 Skill 声明定义"
+```
+
+---
+
+### 73. feat(services): 实现工具编排器与 LLM 工具调用循环
+
+- **提交时间**：2026-06-19 09:00
+- **说明**：`tool_orchestrator.py` 的 ToolOrchestrator 实现工具版对话主流程：按 AgentRole 过滤激活 Skill → VisibilityCalculator 计算可见工具 → 无可见工具时 no_tools 短路 → Injector 注入 JSON Schema → LLM bind_tools → 工具调用循环（LLM 响应含 tool_calls 时逐个执行 → 结果以 tool 消息回填 → 继续生成，无 tool_calls 时返回最终答案），最大 max_tool_rounds 轮（默认 5），超限 truncated=True。每次工具调用经 Permission 校验越权，结果记入 ToolMetrics。支持 history 注入与 session_id 透传。
+- **变更文件**：`src/knowflow/services/tool_orchestrator.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-19T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-19T09:00:00+08:00"
+git add src/knowflow/services/tool_orchestrator.py
+git commit -m "feat(services): 实现工具编排器与 LLM 工具调用循环"
+```
+
+---
+
+### 74. feat(api): skill 端点接入与工具治理依赖注入
+
+- **提交时间**：2026-06-19 10:30
+- **说明**：`api/deps.py` 新增 `get_skill_manager`/`get_tool_registry` 依赖（SkillManager 懒加载单例，ToolRegistry 经 build_default_registry 构造），供端点注入。`api/v1/endpoints/skill.py` 替换 M3 占位 501：GET /skills 列出全部 Skill（含运行时启停状态），PUT /skills/{name}/toggle 切换启停（不存在返回 404）。`test_stub_endpoints.py` 移除 skill 两个 501 用例。
+- **变更文件**：`src/knowflow/api/deps.py`、`src/knowflow/api/v1/endpoints/skill.py`、`tests/unit/api/test_stub_endpoints.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-19T10:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-19T10:30:00+08:00"
+git add src/knowflow/api/deps.py src/knowflow/api/v1/endpoints/skill.py tests/unit/api/test_stub_endpoints.py
+git commit -m "feat(api): skill 端点接入与工具治理依赖注入"
+```
+
+---
+
+### 75. test(tools): 添加工具治理与内置工具单测
+
+- **提交时间**：2026-06-19 14:00
+- **说明**：9 个工具单测文件覆盖全部核心逻辑：test_registry（注册/查询/按域过滤）、test_domain_visibility（四类域可见性/Skill 过滤/去重/依赖激活）、test_skill_loader（frontmatter 解析/校验/目录加载/真实 skills/）、test_dependency_resolver（拓扑排序/循环检测/缺失依赖）、test_injector（Schema 构建/Token 估算）、test_permission（越权拦截）、test_metrics（调用记录/统计/快照）、test_skill_manager（加载/启停/active_skills）、test_builtin_tools（calculator 安全求值/retrieval 返回截断/file_tools 沙盒读写/search_tool 域校验）。`tests/fakes.py` 新增 FakeChunkWithScore/FakeToolCallingLLM（脚本化响应）供工具与编排器单测使用。
+- **变更文件**：`tests/unit/tools/test_registry.py`、`tests/unit/tools/test_domain_visibility.py`、`tests/unit/tools/test_skill_loader.py`、`tests/unit/tools/test_dependency_resolver.py`、`tests/unit/tools/test_injector.py`、`tests/unit/tools/test_permission.py`、`tests/unit/tools/test_metrics.py`、`tests/unit/tools/test_skill_manager.py`、`tests/unit/tools/test_builtin_tools.py`、`tests/fakes.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-19T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-19T14:00:00+08:00"
+git add tests/unit/tools/test_registry.py tests/unit/tools/test_domain_visibility.py tests/unit/tools/test_skill_loader.py tests/unit/tools/test_dependency_resolver.py tests/unit/tools/test_injector.py tests/unit/tools/test_permission.py tests/unit/tools/test_metrics.py tests/unit/tools/test_skill_manager.py tests/unit/tools/test_builtin_tools.py tests/fakes.py
+git commit -m "test(tools): 添加工具治理与内置工具单测"
+```
+
+---
+
+### 76. test(services): 添加工具编排器与 skill 端点单测
+
+- **提交时间**：2026-06-19 15:30
+- **说明**：`test_tool_orchestrator.py` 用 FakeToolCallingLLM（脚本化响应）+ CalculatorTool 验证编排器全部分支：无可见工具短路、单轮工具调用→结果回填→最终答案、无需工具直接回答、越权调用被拦截但循环不中断、达到 max_tool_rounds 时 truncated=True、指标被记录、history 注入消息序列、子 Agent 可调用 subagent_only 工具。`test_skill_endpoint.py` 验证 GET /skills 列表与 PUT /skills/{name}/toggle 启停（含 404）。`conftest.py` client fixture 注入 SkillManager 与 ToolRegistry（fake retriever + fake minio）。
+- **变更文件**：`tests/unit/services/test_tool_orchestrator.py`、`tests/unit/api/test_skill_endpoint.py`、`tests/conftest.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-19T15:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-19T15:30:00+08:00"
+git add tests/unit/services/test_tool_orchestrator.py tests/unit/api/test_skill_endpoint.py tests/conftest.py
+git commit -m "test(services): 添加工具编排器与 skill 端点单测"
+```
+
+---
+
+### 77. feat(scripts): 添加工具治理指标对比脚本
+
+- **提交时间**：2026-06-19 16:30
+- **说明**：`scripts/benchmark_tools.py` 对比"全量工具注入 vs 执行域隔离注入"三项指标。静态模式（默认）：用规则意图识别（关键词匹配）激活 Skill，统计 33 条场景（覆盖 4 个 Skill + direct-only，主/子 Agent 角色）的可见工具数下降率、Schema Token 下降率、FC 准确率（预期工具在可见集中）。支持 `--report` 生成 Markdown 报告到 docs/benchmarks/。静态实测：可见工具数 -43.4%（目标 -34.2%）、Schema Token -45.2%（目标 -32.6%）、FC 准确率 100.0%（目标 94+%），三项均达标。
+- **变更文件**：`scripts/benchmark_tools.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-19T16:30:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-19T16:30:00+08:00"
+git add scripts/benchmark_tools.py
+git commit -m "feat(scripts): 添加工具治理指标对比脚本"
+```
+
+---
+
+### 78. docs(tests): 编写工具治理指标测试文档
+
+- **提交时间**：2026-06-20 09:00
+- **说明**：`docs/tests/指标测试-工具治理.md` 按 AGENTS.md 2.2 节要求编写，覆盖需真实容器+真实模型的端到端验收：前置条件（docker compose 四件套 + LLM API Key + 门禁通过 + 静态模式自检）、5 项测试用例（Skill 列表与启停、执行域隔离静态指标对比、真实 LLM 工具调用对话、沙盒文件系统安全用例、工具治理单测全量验证），每项含步骤+预期+结果记录表（留空待用户填写）。`docs/benchmarks/tool_governance_20260806.md` 为静态模式自动产出的指标对比报告（含 33 条场景明细）。备注已知限制：静态模式 FC 准确率为代理指标、search_tool 依赖 duckduckgo、Skill 启停为进程内状态、工具编排器待 P8 接入 chat_service。
+- **变更文件**：`docs/tests/指标测试-工具治理.md`、`docs/benchmarks/tool_governance_20260806.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-20T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-20T09:00:00+08:00"
+git add "docs/tests/指标测试-工具治理.md" docs/benchmarks/tool_governance_20260806.md
+git commit -m "docs(tests): 编写工具治理指标测试文档"
+```
+
+---
+
+### 79. docs: 更新提交日志
+
+- **提交时间**：2026-06-20 10:00
+- **说明**：记录 M5（P6 + P9）全部 16 个业务提交（63-78）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-20T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-20T10:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
