@@ -3,9 +3,10 @@
 静态模式(默认): 不依赖真实 LLM, 用规则意图识别激活 Skill, 统计三项指标:
     1. 可见工具数下降率(全量注入 vs 执行域隔离)
     2. Schema Token 下降率(全量注入 vs 执行域隔离)
-    3. FC 准确率(正确工具在可见集中视为可正确调用, 30+ 场景)
+    3. FC 准确率(预期工具在可见集中视为可正确调用, 30+ 场景)
 
-真实模式: 需 LLM API Key, 由 ToolOrchestrator 跑真实工具调用循环, 按测试文档执行.
+真实模式: 需 LLM API Key, 由 ToolOrchestrator 跑真实工具调用循环,
+以 LLM 实际调用的工具是否命中预期判定 FC 准确率.
 
 用法:
     uv run python scripts/benchmark_tools.py              # 静态模式(默认)
@@ -16,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -39,11 +41,14 @@ from knowflow.tools.visibility import VisibilityCalculator  # noqa: E402
 
 @dataclass
 class Scenario:
-    """单条工具调用场景: 查询 + 预期激活 Skill + 预期调用工具 + Agent 角色."""
+    """单条工具调用场景: 查询 + 预期激活 Skill + 预期调用工具 + Agent 角色.
+
+    expected_tool 为 None 表示预期不调用工具(LLM 直接回答即正确).
+    """
 
     query: str
     expected_skill: str | None  # None 表示无需激活 Skill(仅 direct 工具)
-    expected_tool: str
+    expected_tool: str | None  # None 表示预期不调用工具
     role: AgentRole = AgentRole.MAIN
     keywords: tuple[str, ...] = ()  # 意图识别关键词
 
@@ -60,6 +65,7 @@ class BenchmarkResult:
     token_reduction_pct: float  # Token 下降率
     fc_accuracy: float  # FC 准确率
     scenario_count: int
+    mode: str = "static"  # static=规则代理判定 / real=真实 LLM 调用判定
     per_scenario: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -184,8 +190,8 @@ SCENARIOS: list[Scenario] = [
         role=AgentRole.SUBAGENT,
         keywords=("查", "文档", "框架"),
     ),
-    # direct-only(无需 Skill) - 4 条
-    Scenario("你好, 自我介绍一下", None, "retrieval_tool", keywords=()),
+    # direct-only(无需 Skill) - 4 条; 自我介绍场景预期不调用工具
+    Scenario("你好, 自我介绍一下", None, None, keywords=()),
     Scenario("1+1 等于几", None, "calculator", keywords=()),
     Scenario("知识库里有报销流程吗", None, "retrieval_tool", keywords=()),
     Scenario("算 3*7", None, "calculator", keywords=()),
@@ -202,6 +208,19 @@ def _recognize_skill(query: str, scenario: Scenario) -> str | None:
     if any(kw in query for kw in scenario.keywords):
         return scenario.expected_skill
     return None
+
+
+def _is_fc_correct(scenario: Scenario, tools: set[str], *, real: bool) -> bool:
+    """FC 判定: 预期工具是否命中给定工具集.
+
+    静态模式(real=False): 命中可见集即可(注入不阻碍调用的代理指标),
+    expected_tool=None 视为恒正确(无需工具).
+    真实模式(real=True): expected_tool=None 要求 LLM 实际未调用任何工具,
+    否则要求实际调用集中包含预期工具.
+    """
+    if scenario.expected_tool is None:
+        return True if not real else len(tools) == 0
+    return scenario.expected_tool in tools
 
 
 def run_static_benchmark() -> BenchmarkResult:
@@ -247,9 +266,9 @@ def run_static_benchmark() -> BenchmarkResult:
         isolated_count_sum += isolated_count
         isolated_token_sum += isolated_tokens
 
-        # FC 准确率: 预期工具是否在可见集中
+        # FC 准确率: 预期工具是否在可见集中(静态代理: 可见即可正确调用)
         visible_names = {t.name for t in visible}
-        correct = sc.expected_tool in visible_names
+        correct = _is_fc_correct(sc, visible_names, real=False)
         if correct:
             fc_correct += 1
 
@@ -259,7 +278,7 @@ def run_static_benchmark() -> BenchmarkResult:
                 "query": sc.query,
                 "role": sc.role.value,
                 "activated_skill": activated or "(none)",
-                "expected_tool": sc.expected_tool,
+                "expected_tool": sc.expected_tool or "(none)",
                 "visible_tools": sorted(visible_names),
                 "baseline_count": baseline_count,
                 "isolated_count": isolated_count,
@@ -284,6 +303,102 @@ def run_static_benchmark() -> BenchmarkResult:
         token_reduction_pct=round(token_reduction, 1),
         fc_accuracy=round(fc_accuracy, 4),
         scenario_count=n,
+        mode="static",
+        per_scenario=per_scenario,
+    )
+
+
+async def run_real_benchmark() -> BenchmarkResult:
+    """真实模式: 真实 LLM 经 ToolOrchestrator 跑工具调用循环, 统计真实 FC 准确率.
+
+    可见工具数/Token 下降率与静态模式同源(规则意图识别), FC 准确率由
+    LLM 实际调用的工具判定. 需 KNOWFLOW_LLM_API_KEY.
+    """
+    from knowflow.core.llm import get_chat_llm
+    from knowflow.sandbox.workspace import WorkspaceManager
+    from knowflow.services.tool_orchestrator import ToolOrchestrator
+
+    llm = get_chat_llm()
+    registry = build_default_registry(
+        retriever=_FakeRetriever(),
+        workspace_manager=WorkspaceManager(_FakeMinio()),
+    )
+    skill_manager = SkillManager()
+    orchestrator = ToolOrchestrator(registry, skill_manager, llm)
+    visibility = VisibilityCalculator()
+    injector = Injector()
+
+    # 全量注入 baseline(同静态模式)
+    all_defs = [t.to_def() for t in registry.list_all() if t.domain != ExecutionDomain.INTERNAL]
+    baseline_count = len(all_defs)
+    baseline_tokens = injector.schema_tokens(all_defs)
+
+    per_scenario: list[dict[str, Any]] = []
+    isolated_count_sum = 0
+    isolated_token_sum = 0
+    fc_correct = 0
+    total = len(SCENARIOS)
+
+    for i, sc in enumerate(SCENARIOS, 1):
+        print(f"[{i}/{total}] {sc.query[:40]}")
+        activated = _recognize_skill(sc.query, sc)
+        active_skills: list[Any] = []
+        if activated:
+            skill_def = skill_manager.get(activated)
+            if skill_def and skill_def.enabled:
+                active_skills = [skill_def.model_copy(update={"enabled": True})]
+        active_skills = filter_skills_by_role(active_skills, sc.role)
+
+        visible = visibility.compute(active_skills, sc.role, registry)
+        isolated_count = len(visible)
+        isolated_tokens = injector.schema_tokens(visible)
+        isolated_count_sum += isolated_count
+        isolated_token_sum += isolated_tokens
+        visible_names = {t.name for t in visible}
+
+        # 真实工具调用循环: 注入隔离可见工具, LLM 自主决定是否调用
+        result = await orchestrator.run(sc.query, agent_role=sc.role, active_skills=active_skills)
+        called = {tc.tool_name for tc in result.tool_calls}
+        correct = _is_fc_correct(sc, called, real=True)
+        if correct:
+            fc_correct += 1
+        print(
+            f"    called={sorted(called) or '(none)'} expected={sc.expected_tool or '(none)'} "
+            f"{'✓' if correct else '✗'}"
+        )
+
+        per_scenario.append(
+            {
+                "query": sc.query,
+                "role": sc.role.value,
+                "activated_skill": activated or "(none)",
+                "expected_tool": sc.expected_tool or "(none)",
+                "called_tools": sorted(called),
+                "visible_tools": sorted(visible_names),
+                "baseline_count": baseline_count,
+                "isolated_count": isolated_count,
+                "isolated_tokens": isolated_tokens,
+                "fc_correct": correct,
+            }
+        )
+
+    n = len(SCENARIOS)
+    avg_isolated_count = isolated_count_sum / n
+    avg_isolated_tokens = isolated_token_sum / n
+    visible_reduction = (1 - avg_isolated_count / baseline_count) * 100
+    token_reduction = (1 - avg_isolated_tokens / baseline_tokens) * 100
+    fc_accuracy = fc_correct / n
+
+    return BenchmarkResult(
+        baseline_visible=baseline_count,
+        isolated_visible=round(avg_isolated_count, 2),
+        visible_reduction_pct=round(visible_reduction, 1),
+        baseline_tokens=baseline_tokens,
+        isolated_tokens=round(avg_isolated_tokens, 2),
+        token_reduction_pct=round(token_reduction, 1),
+        fc_accuracy=round(fc_accuracy, 4),
+        scenario_count=n,
+        mode="real",
         per_scenario=per_scenario,
     )
 
@@ -354,11 +469,13 @@ class _FakeMinio:
 
 def _format_report(result: BenchmarkResult) -> str:
     """生成 Markdown 报告."""
+    is_real = result.mode == "real"
     lines = [
         "# 工具治理指标对比报告",
         "",
         f"> 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        "> 模式: 静态(规则意图识别, 无真实 LLM)",
+        "> 模式: "
+        + ("真实(真实 LLM 工具调用循环)" if is_real else "静态(规则意图识别, 无真实 LLM)"),
         f"> 场景数: {result.scenario_count}",
         "",
         "## 指标总览",
@@ -379,8 +496,13 @@ def _format_report(result: BenchmarkResult) -> str:
         "(direct 恒可见 + skill_only 按激活 + subagent_only 按角色 + internal 永不可见)。",
         "- **可见工具数**: 注入给 LLM 的工具定义数量, 越少 prompt 越精简。",
         "- **Schema Token**: 注入 schema 的字符数 / 4 近似 Token 量。",
-        f"- **FC 准确率**: {result.scenario_count} 条场景中, 预期工具在隔离可见集中的比例"
-        "(静态模式代理指标; 真实模式由 LLM 实际调用判定)。",
+        f"- **FC 准确率**: {result.scenario_count} 条场景中, "
+        + (
+            "LLM 实际调用的工具命中预期工具的比例(真实模式, 由 ToolOrchestrator 跑"
+            "完整工具调用循环判定); 预期不调用工具的场景要求 LLM 未发起调用。"
+            if is_real
+            else "预期工具在隔离可见集中的比例(静态模式代理指标; 真实模式由 LLM 实际调用判定)。"
+        ),
         "",
         "## 场景明细",
         "",
@@ -400,31 +522,32 @@ def _format_report(result: BenchmarkResult) -> str:
             f"执行域隔离使可见工具数下降 **{result.visible_reduction_pct}%**(目标 34.2%), "
             f"Schema Token 下降 **{result.token_reduction_pct}%**(目标 32.6%), "
             f"FC 准确率 **{result.fc_accuracy * 100:.1f}%**(目标 94+%)。"
-            "静态模式用规则意图识别模拟 Skill 激活, 真实模式请按 "
-            "`docs/tests/指标测试-工具治理.md` 执行。",
+            + (
+                ""
+                if is_real
+                else "静态模式用规则意图识别模拟 Skill 激活, 真实模式请运行 "
+                "`uv run python scripts/benchmark_tools.py --mode real` 并配置 LLM API Key。"
+            ),
             "",
-            "> 注: 静态模式 FC 准确率为「预期工具在可见集中」的代理指标, "
-            "不等同真实 LLM 调用准确率。"
-            "真实模式需 LLM API Key, 由 ToolOrchestrator 跑完整工具调用循环后统计。",
+            "> 注: "
+            + (
+                "真实模式 FC 准确率由真实 LLM 的工具调用判定, 与静态代理指标口径不同, "
+                "结果以真实实测为准。"
+                if is_real
+                else "静态模式 FC 准确率为「预期工具在可见集中」的代理指标, "
+                "不等同真实 LLM 调用准确率。真实模式需 LLM API Key, 由 ToolOrchestrator 跑完整"
+                "工具调用循环后统计。"
+            ),
         ]
     )
     return "\n".join(lines)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="工具治理指标对比脚本")
-    parser.add_argument("--mode", choices=["static", "real"], default="static", help="运行模式")
-    parser.add_argument("--report", action="store_true", help="生成报告到 docs/benchmarks/")
-    args = parser.parse_args()
-
-    if args.mode == "real":
-        print("真实模式需 LLM API Key + 真实工具链路, 请按 docs/tests/指标测试-工具治理.md 执行。")
-        print("提示: 设置 KNOWFLOW_LLM_API_KEY 后运行, 由 ToolOrchestrator 跑真实工具调用循环。")
-        return
-
-    result = run_static_benchmark()
+def _print_result(result: BenchmarkResult) -> None:
+    """控制台输出三项指标(含模式标注)."""
+    mode_label = "真实模式" if result.mode == "real" else "静态模式"
     print("═" * 60)
-    print("工具治理指标对比(静态模式)")
+    print(f"工具治理指标对比({mode_label})")
     print("═" * 60)
     print(f"场景数:           {result.scenario_count}")
     print(
@@ -440,13 +563,40 @@ def main() -> None:
     print(f"FC 准确率:        {result.fc_accuracy * 100:.1f}%  (目标 94+%)")
     print("═" * 60)
 
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="工具治理指标对比脚本")
+    parser.add_argument("--mode", choices=["static", "real"], default="static", help="运行模式")
+    parser.add_argument("--report", action="store_true", help="生成报告到 docs/benchmarks/")
+    args = parser.parse_args()
+
+    if args.mode == "real":
+        from knowflow.core.config import get_settings
+
+        if not get_settings().llm_api_key:
+            print("真实模式需要 KNOWFLOW_LLM_API_KEY, 请先配置 .env 后重试。")
+            sys.exit(1)
+        result = asyncio.run(run_real_benchmark())
+        _print_result(result)
+        if args.report:
+            _write_report(result, suffix="_real")
+        return
+
+    result = run_static_benchmark()
+    _print_result(result)
+
     if args.report:
-        report_dir = ROOT / "docs" / "benchmarks"
-        report_dir.mkdir(parents=True, exist_ok=True)
-        date_str = datetime.now().strftime("%Y%m%d")
-        report_path = report_dir / f"tool_governance_{date_str}.md"
-        report_path.write_text(_format_report(result), encoding="utf-8")
-        print(f"\n报告已生成: {report_path}")
+        _write_report(result)
+
+
+def _write_report(result: BenchmarkResult, suffix: str = "") -> None:
+    """写指标报告到 docs/benchmarks/."""
+    report_dir = ROOT / "docs" / "benchmarks"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    date_str = datetime.now().strftime("%Y%m%d")
+    report_path = report_dir / f"tool_governance_{date_str}{suffix}.md"
+    report_path.write_text(_format_report(result), encoding="utf-8")
+    print(f"\n报告已生成: {report_path}")
 
 
 if __name__ == "__main__":

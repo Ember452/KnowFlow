@@ -225,3 +225,121 @@ async def test_subagent_can_call_search_tool() -> None:
     assert len(result.tool_calls) == 1
     # search_tool 权限通过(非越权错误), execute 失败是依赖问题
     assert result.tool_calls[0].error is None or "越权" not in (result.tool_calls[0].error or "")
+
+
+# ── 检索上下文注入 / 激活集覆盖 / 会话参数自动补全 ──
+
+
+async def test_context_injected_into_system_prompt() -> None:
+    """检索上下文注入 system prompt, 供 LLM 直接引用(无需重复调检索工具)."""
+    llm = FakeToolCallingLLM([_ScriptedResponse(content="好的")])
+    orchestrator = ToolOrchestrator(
+        registry=_build_registry(),
+        skill_manager=_empty_skill_manager(),
+        llm=llm,
+    )
+    context = "[1] 报销流程: 填写报销单并提交部门审批。"
+    await orchestrator.run("报销流程是什么?", context=context)
+
+    system = llm.last_messages[0]["content"]
+    assert "检索上下文" in system
+    assert context in system
+
+
+async def test_active_skills_override_visible_tools() -> None:
+    """调用方指定 active_skills 时, 仅该 Skill 工具(subagent_only)与 direct 工具可见."""
+    from knowflow.core.constants import ExecutionDomain
+    from knowflow.tools.skill_schema import SkillDefinition
+
+    review_skill = SkillDefinition(
+        name="code_review",
+        tools=["search_tool"],
+        dependencies=["search_tool"],
+        domain=ExecutionDomain.SUBAGENT_ONLY,
+    )
+    llm = FakeToolCallingLLM([_ScriptedResponse(content="审查完成")])
+    orchestrator = ToolOrchestrator(
+        registry=_build_registry(),
+        skill_manager=_empty_skill_manager(),
+        llm=llm,
+    )
+    await orchestrator.run("审查代码", agent_role=AgentRole.SUBAGENT, active_skills=[review_skill])
+
+    bound_names = {t["function"]["name"] for t in llm.bound_tools}
+    assert "search_tool" in bound_names  # 激活 Skill 声明的 subagent_only 工具
+    assert "calculator" in bound_names  # direct 域恒可见
+
+
+async def test_session_id_auto_filled_for_file_tools() -> None:
+    """LLM 未提供 session_id 时, 文件类工具自动补当前会话 id(沙盒隔离)."""
+    from knowflow.core.constants import ExecutionDomain
+    from knowflow.sandbox.workspace import WorkspaceManager
+    from knowflow.tools.builtin.file_tools import FileWriteTool
+    from knowflow.tools.skill_schema import SkillDefinition
+    from tests.fakes import FakeMinio
+
+    reg = ToolRegistry()
+    reg.register(FileWriteTool(WorkspaceManager(FakeMinio())))
+    llm = FakeToolCallingLLM(
+        [
+            _ScriptedResponse(
+                tool_calls=[
+                    {
+                        "id": "1",
+                        "name": "file_write_tool",
+                        "args": {"path": "/workspace/a.csv", "content": "x"},
+                    }
+                ]
+            ),
+            _ScriptedResponse(content="已写入"),
+        ]
+    )
+    analysis_skill = SkillDefinition(
+        name="data_analysis",
+        tools=["file_write_tool"],
+        dependencies=[],
+        domain=ExecutionDomain.SKILL_ONLY,
+    )
+    orchestrator = ToolOrchestrator(registry=reg, skill_manager=_empty_skill_manager(), llm=llm)
+    result = await orchestrator.run(
+        "把结果存成 CSV", session_id="42", active_skills=[analysis_skill]
+    )
+
+    assert result.tool_calls[0].args["session_id"] == "42"
+    assert result.tool_calls[0].success is True
+
+
+async def test_session_id_not_injected_when_none() -> None:
+    """未传 session_id 时不自动补参, 工具参数保持 LLM 原样."""
+    from knowflow.core.constants import ExecutionDomain
+    from knowflow.sandbox.workspace import WorkspaceManager
+    from knowflow.tools.builtin.file_tools import FileWriteTool
+    from knowflow.tools.skill_schema import SkillDefinition
+    from tests.fakes import FakeMinio
+
+    reg = ToolRegistry()
+    reg.register(FileWriteTool(WorkspaceManager(FakeMinio())))
+    llm = FakeToolCallingLLM(
+        [
+            _ScriptedResponse(
+                tool_calls=[
+                    {
+                        "id": "1",
+                        "name": "file_write_tool",
+                        "args": {"path": "/workspace/a.csv", "content": "x"},
+                    }
+                ]
+            ),
+            _ScriptedResponse(content="已写入"),
+        ]
+    )
+    analysis_skill = SkillDefinition(
+        name="data_analysis",
+        tools=["file_write_tool"],
+        dependencies=[],
+        domain=ExecutionDomain.SKILL_ONLY,
+    )
+    orchestrator = ToolOrchestrator(registry=reg, skill_manager=_empty_skill_manager(), llm=llm)
+    result = await orchestrator.run("把结果存成 CSV", active_skills=[analysis_skill])
+
+    assert "session_id" not in result.tool_calls[0].args

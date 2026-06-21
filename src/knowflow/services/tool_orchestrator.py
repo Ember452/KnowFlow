@@ -22,6 +22,7 @@ from knowflow.tools.metrics import ToolMetrics
 from knowflow.tools.permission import PermissionChecker
 from knowflow.tools.registry import ToolRegistry
 from knowflow.tools.skill_manager import SkillManager
+from knowflow.tools.skill_schema import SkillDefinition
 from knowflow.tools.visibility import VisibilityCalculator
 
 logger = get_logger(__name__)
@@ -29,6 +30,11 @@ logger = get_logger(__name__)
 _SYSTEM_PROMPT = (
     "你是 KnowFlow 助手, 可调用工具完成用户任务. "
     "优先调用合适的工具, 工具返回结果后据此作答; 无需工具时直接回答."
+)
+
+# 检索上下文注入版: 上层(chat_service)预检索后传入, 避免重复调 retrieval_tool
+_SYSTEM_PROMPT_WITH_CONTEXT = (
+    _SYSTEM_PROMPT + "\n\n检索上下文(优先据此回答, 引用来源用 [n] 标注):\n{context}"
 )
 
 
@@ -82,17 +88,35 @@ class ToolOrchestrator:
         session_id: str | None = None,
         agent_role: AgentRole = AgentRole.MAIN,
         history: list[dict[str, str]] | None = None,
+        context: str | None = None,
+        active_skills: list[SkillDefinition] | None = None,
     ) -> OrchestratorResult:
-        """执行工具版对话: 激活 Skill → 注入可见工具 → 工具调用循环 → 最终答案."""
-        active = filter_skills_by_role(self._skills.active_skills(), agent_role)
+        """执行工具版对话: 激活 Skill → 注入可见工具 → 工具调用循环 → 最终答案.
+
+        Args:
+            query: 用户问题.
+            session_id: 会话 id(用于文件类工具自动补参).
+            agent_role: 当前 Agent 角色, 决定 subagent_only 域可见性.
+            history: 历史消息(role/content).
+            context: 检索上下文文本, 注入 system prompt(上层预检索时传入).
+            active_skills: 调用方指定的激活 Skill 集; None 时使用管理器全部启用项.
+        """
+        if active_skills is None:
+            active = filter_skills_by_role(self._skills.active_skills(), agent_role)
+        else:
+            active = filter_skills_by_role(active_skills, agent_role)
         visible = self._visibility.compute(active, agent_role, self._registry)
         if not visible:
             return OrchestratorResult(answer="", no_tools=True)
 
         tool_defs = self._injector.inject(visible)
         bound = self._llm.bind_tools(tool_defs)
+        if context:
+            system = _SYSTEM_PROMPT_WITH_CONTEXT.replace("{context}", context)
+        else:
+            system = _SYSTEM_PROMPT
         messages: list[Any] = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system},
             *(history or []),
             {"role": "user", "content": query},
         ]
@@ -142,9 +166,9 @@ class ToolOrchestrator:
         """执行单次工具调用: 权限校验 → 执行 → 记录指标. 越权/失败不中断循环."""
         name = str(tool_call.get("name", ""))
         args = dict(tool_call.get("args", {}) or {})
-        # 文件类工具自动补 session_id(若未提供), 便于 LLM 调用
-        if session_id is not None and "session_id" in args and not args.get("session_id"):
-            args["session_id"] = session_id
+        # 文件类工具自动补 session_id(LLM 未提供时), 便于沙盒会话隔离
+        if session_id is not None:
+            args.setdefault("session_id", session_id)
         start = time.perf_counter()
         try:
             self._permission.check(name, agent_role, active, self._registry)

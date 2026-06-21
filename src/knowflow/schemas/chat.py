@@ -32,4 +32,7 @@ class ChatResponse(BaseModel):
     session_id: str
     answer: str
     citations: list[Citation] = Field(default_factory=list)
+    tool_calls: list[dict] = Field(
+        default_factory=list, description="本轮工具调用记录(名称/参数/成败/耗时)"
+    )
     latency_ms: float = 0.0
