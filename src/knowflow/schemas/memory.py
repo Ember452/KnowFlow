@@ -28,3 +28,9 @@ class MemoryRecallRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     user_id: str
     top_k: int = Field(default=5, ge=1, le=20)
+
+
+class MemorySedimentRequest(BaseModel):
+    """手动沉淀请求: 将指定会话的短期记忆筛选压缩后写入长期."""
+
+    session_id: int

@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     spill_threshold_tokens: int = 4000
     window_max_turns: int = 20
 
+    # ── 记忆 ──
+    memory_recall_top_k: int = 3  # 记忆召回条数
+    memory_sediment_interval: int = 5  # 每 N 轮对话沉淀短期记忆入长期
+    memory_sediment_threshold: float = 6.0  # 沉淀的重要性阈值(0-10)
+
     # ── 存储与配额 ──
     session_ttl_seconds: int = 3600
     workspace_quota_bytes: int = 104857600  # 100MB
