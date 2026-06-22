@@ -16,7 +16,14 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from knowflow.models import Base
-from tests.fakes import FakeBroker, FakeChatLLM, FakeMinio, FakeRetriever
+from tests.fakes import (
+    FakeBroker,
+    FakeChatLLM,
+    FakeEmbeddingClient,
+    FakeMinio,
+    FakeRedisList,
+    FakeRetriever,
+)
 
 
 @pytest_asyncio.fixture
@@ -85,12 +92,16 @@ def client(
 
     minio = FakeMinio()
     broker = FakeBroker()
+    # Redis List 桩: 单实例共享, 保证 chat(短期记忆写入) 与 memory(沉淀读取) 请求间一致
+    redis_list = FakeRedisList()
 
     app.dependency_overrides[deps.get_db] = override_get_db
-    app.dependency_overrides[deps.get_redis_dep] = lambda: object()  # 占位, 中间件降级
+    app.dependency_overrides[deps.get_redis_dep] = lambda: redis_list
     app.dependency_overrides[deps.get_minio_dep] = lambda: minio
     app.dependency_overrides[deps.get_broker_dep] = lambda: broker
     app.dependency_overrides[deps.get_llm_dep] = lambda: FakeChatLLM()  # 对话端点用 fake LLM
+    # Embedding 用固定向量 fake, 避免加载真实模型
+    app.dependency_overrides[deps.get_embedding_dep] = lambda: FakeEmbeddingClient()
     # retriever 走模块单例, 测试可 set_retriever 替换
     deps.set_retriever(FakeRetriever())
     app.dependency_overrides[deps.get_retriever] = lambda: deps.get_retriever()
@@ -107,6 +118,10 @@ def client(
         build_default_registry(retriever=FakeRetriever(), workspace_manager=WorkspaceManager(minio))
     )
     app.dependency_overrides[deps.get_tool_registry] = lambda: deps.get_tool_registry()
+    # 工具编排器: 默认关闭(避免构造真实 ChatOpenAI), 工具链路用例自行注入 fake
+    app.dependency_overrides[deps.get_tool_orchestrator] = lambda: None
+    # 上下文管理器: 默认关闭(避免构造真实 LLM/MinIO), 上下文策略用例自行注入 fake
+    app.dependency_overrides[deps.get_context_manager] = lambda: None
 
     yield TestClient(app)
 

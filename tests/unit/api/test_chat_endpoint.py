@@ -68,6 +68,74 @@ def test_chat_stream_events_sequence(client: TestClient) -> None:
     assert done["citations"][0]["chunk_id"] == 1
 
 
+# ── 工具链路(orchestrator 注入) ──
+
+
+def test_chat_sync_with_tool_orchestrator(client: TestClient) -> None:
+    """同步对话接入工具编排: 响应含 tool_calls(calculator 场景)."""
+    from knowflow.services.tool_orchestrator import ToolCallRecord
+    from tests.fakes import FakeToolOrchestrator
+
+    fake = FakeToolOrchestrator(
+        answer="2 的 10 次方是 1024。",
+        tool_calls=[
+            ToolCallRecord(
+                tool_name="calculator",
+                args={"expression": "2**10"},
+                success=True,
+                output=1024,
+                latency_ms=3.0,
+            )
+        ],
+    )
+    deps.set_tool_orchestrator(fake)
+    client.app.dependency_overrides[deps.get_tool_orchestrator] = lambda: (
+        deps.get_tool_orchestrator()
+    )
+
+    resp = client.post("/api/v1/chat", json={"message": "帮我算 2 的 10 次方", "user_id": "u1"})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["answer"] == "2 的 10 次方是 1024。"
+    assert data["tool_calls"][0]["tool"] == "calculator"
+    assert data["tool_calls"][0]["success"] is True
+
+
+def test_chat_stream_with_tool_events(client: TestClient) -> None:
+    """流式对话工具链路: retrieval → tool_start → tool_end → token → done."""
+    from knowflow.services.tool_orchestrator import ToolCallRecord
+    from tests.fakes import FakeToolOrchestrator
+
+    fake = FakeToolOrchestrator(
+        answer="计算结果: 1024",
+        tool_calls=[
+            ToolCallRecord(
+                tool_name="calculator",
+                args={"expression": "2**10"},
+                success=True,
+                output=1024,
+                latency_ms=3.0,
+            )
+        ],
+    )
+    deps.set_tool_orchestrator(fake)
+    client.app.dependency_overrides[deps.get_tool_orchestrator] = lambda: (
+        deps.get_tool_orchestrator()
+    )
+
+    with client.stream(
+        "POST", "/api/v1/chat/stream", json={"message": "帮我算 2 的 10 次方"}
+    ) as resp:
+        assert resp.status_code == 200
+        events = _parse_sse(resp.iter_lines())
+
+    types = [e[0] for e in events]
+    assert types == ["retrieval", "tool_start", "tool_end", "token", "done"]
+    tool_end = json.loads(events[2][1])
+    assert tool_end["success"] is True
+    assert json.loads(events[3][1])["delta"] == "计算结果: 1024"
+
+
 def test_chat_stream_error_event(client: TestClient) -> None:
     """LLM 流式异常: 事件流以 error 结束."""
     deps.set_retriever(FakeRetriever(chunks=[_CHUNK]))

@@ -182,10 +182,107 @@ def set_tool_registry(registry: Any) -> None:
 
 def dispose_tools() -> None:
     """释放工具治理单例."""
-    global _skill_manager, _tool_registry
+    global _skill_manager, _tool_registry, _orchestrator, _context_manager
     _skill_manager = None
     _tool_registry = None
+    _orchestrator = None
+    _context_manager = None
 
 
 SkillManagerDep = Annotated[Any, Depends(get_skill_manager)]
 ToolRegistryDep = Annotated[Any, Depends(get_tool_registry)]
+
+
+# ── 工具编排器(懒加载单例, 测试可覆盖) ──
+
+_orchestrator: Any = None
+
+
+def get_tool_orchestrator() -> Any:
+    """ToolOrchestrator 单例: registry + skill_manager + llm 装配.
+
+    依赖未就绪(如 MinIO 未初始化)时返回 None, 对话回退直连检索链路, 不阻塞请求.
+    测试可用 set_tool_orchestrator 注入 fake.
+    """
+    global _orchestrator
+    if _orchestrator is not None:
+        return _orchestrator
+    from knowflow.core.llm import get_chat_llm
+    from knowflow.services.tool_orchestrator import ToolOrchestrator
+
+    try:
+        _orchestrator = ToolOrchestrator(
+            registry=get_tool_registry(),
+            skill_manager=get_skill_manager(),
+            llm=get_chat_llm(),
+        )
+        logger.info("deps.tool_orchestrator_initialized")
+    except Exception as exc:
+        logger.warning("deps.tool_orchestrator_unavailable", error=str(exc))
+        _orchestrator = None
+    return _orchestrator
+
+
+def set_tool_orchestrator(orchestrator: Any) -> None:
+    """测试注入 orchestrator(fake 或 None)."""
+    global _orchestrator
+    _orchestrator = orchestrator
+
+
+OrchestratorDep = Annotated[Any, Depends(get_tool_orchestrator)]
+
+
+# ── 上下文管理器(懒加载单例, 测试可覆盖) ──
+
+_context_manager: Any = None
+
+
+def get_context_manager() -> Any:
+    """ContextManager 单例: 窗口/摘要/卸载/预算编排.
+
+    依赖 LLM/MinIO 未就绪时返回 None(直连链路用内置组装), 不阻塞请求.
+    测试可用 set_context_manager 注入 fake.
+    """
+    global _context_manager
+    if _context_manager is not None:
+        return _context_manager
+    try:
+        from knowflow.context.spiller import Spiller
+        from knowflow.context.strategy import ContextManager, ContextStrategy
+        from knowflow.context.summarizer import Summarizer
+        from knowflow.core.llm import get_chat_llm
+        from knowflow.db.minio import get_minio
+        from knowflow.sandbox.workspace import WorkspaceManager
+
+        strategy = ContextStrategy(
+            summarizer=Summarizer(get_chat_llm()),
+            spiller=Spiller(WorkspaceManager(get_minio())),
+        )
+        _context_manager = ContextManager(strategy=strategy)
+        logger.info("deps.context_manager_initialized")
+    except Exception as exc:
+        logger.warning("deps.context_manager_unavailable", error=str(exc))
+        _context_manager = None
+    return _context_manager
+
+
+def set_context_manager(manager: Any) -> None:
+    """测试注入 context_manager(fake 或 None)."""
+    global _context_manager
+    _context_manager = manager
+
+
+ContextManagerDep = Annotated[Any, Depends(get_context_manager)]
+
+
+# ── Embedding 客户端(懒加载单例, 测试可覆盖) ──
+
+
+def get_embedding_dep() -> Any:
+    """Embedding 客户端依赖(长期记忆向量用). 测试可覆盖为 fake."""
+    from knowflow.retrieval.embedding import get_embedding_client
+
+    return get_embedding_client()
+
+
+EmbeddingDep = Annotated[Any, Depends(get_embedding_dep)]

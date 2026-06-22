@@ -9,18 +9,30 @@ from knowflow.core.exceptions import NotFoundError, ValidationError
 from knowflow.db.repositories.session_repo import MessageRepo, TurnRepo
 from knowflow.schemas.chat import ChatRequest
 from knowflow.services.chat_service import ChatService
-from tests.fakes import FakeChatLLM, FakeChunkWithScore, FakeRetriever
+from knowflow.services.tool_orchestrator import ToolCallRecord
+from tests.fakes import (
+    FakeChatLLM,
+    FakeChunkWithScore,
+    FakeMemoryManager,
+    FakeRetriever,
+    FakeToolOrchestrator,
+)
 
 _CHUNK = FakeChunkWithScore(
     chunk_id=1, content="报销流程: 填写报销单并提交部门审批。", score=0.9, source="hybrid"
 )
 
 
-def _service(session: AsyncSession, llm: FakeChatLLM | None = None) -> ChatService:
+def _service(
+    session: AsyncSession,
+    llm: FakeChatLLM | None = None,
+    orchestrator: FakeToolOrchestrator | None = None,
+) -> ChatService:
     return ChatService(
         session=session,
         retriever=FakeRetriever(chunks=[_CHUNK]),
         llm=llm or FakeChatLLM(),
+        orchestrator=orchestrator,
     )
 
 
@@ -122,3 +134,148 @@ async def test_stream_error_event(db_session: AsyncSession) -> None:
 
     assert events[-1]["event"] == "error"
     assert "failed" in json.loads(events[-1]["data"])["error"]
+
+
+# ── 工具链路(orchestrator 注入) ──
+
+
+def _tool_record(**kw: object) -> ToolCallRecord:
+    """构造一条工具调用记录(默认 calculator 成功)."""
+    fields = {"latency_ms": 12.3, **kw}
+    return ToolCallRecord(
+        tool_name="calculator",
+        args={"expression": "2**10"},
+        success=True,
+        output=1024,
+        **fields,
+    )
+
+
+async def test_chat_with_orchestrator_runs_tools(db_session: AsyncSession) -> None:
+    """工具链路同步: orchestrator 执行工具调用, 响应含 tool_calls 且随消息落库."""
+    orc = FakeToolOrchestrator(answer="2 的 10 次方是 1024。", tool_calls=[_tool_record()])
+    llm = FakeChatLLM()
+    resp = await _service(db_session, llm, orchestrator=orc).chat(
+        ChatRequest(message="帮我算 2 的 10 次方", user_id="u1")
+    )
+
+    assert resp.answer == "2 的 10 次方是 1024。"
+    assert len(resp.tool_calls) == 1
+    assert resp.tool_calls[0]["tool"] == "calculator"
+    assert resp.tool_calls[0]["success"] is True
+    # 直连 LLM 未被调用(工具链路接管), 预检索上下文已注入编排器
+    assert llm.invoke_calls == 0
+    assert orc.run_calls[0]["context"] == "[1] 报销流程: 填写报销单并提交部门审批。"
+
+    messages = await MessageRepo(db_session).list_by_session(int(resp.session_id))
+    assert messages[1].citations["tool_calls"][0]["tool"] == "calculator"
+
+
+async def test_chat_with_orchestrator_no_tools_falls_back(db_session: AsyncSession) -> None:
+    """无可见工具时回退直连链路: 答案来自 LLM, 无工具记录."""
+    orc = FakeToolOrchestrator(no_tools=True)
+    llm = FakeChatLLM()
+    resp = await _service(db_session, llm, orchestrator=orc).chat(
+        ChatRequest(message="报销流程是什么?", user_id="u1")
+    )
+
+    assert resp.answer == llm.answer
+    assert resp.tool_calls == []
+    assert llm.invoke_calls == 1
+
+
+async def test_stream_with_orchestrator_tool_events(db_session: AsyncSession) -> None:
+    """工具链路流式: retrieval → tool_start → tool_end → token(整段答案) → done."""
+    orc = FakeToolOrchestrator(answer="计算结果: 1024", tool_calls=[_tool_record(latency_ms=5.0)])
+    events = []
+    async for e in _service(db_session, orchestrator=orc).stream_events(
+        ChatRequest(message="帮我算 2 的 10 次方", user_id="u1")
+    ):
+        events.append(e)
+
+    types = [e["event"] for e in events]
+    assert types == ["retrieval", "tool_start", "tool_end", "token", "done"]
+    assert json.loads(events[2]["data"])["success"] is True
+    assert json.loads(events[3]["data"])["delta"] == "计算结果: 1024"
+    done = json.loads(events[-1]["data"])
+    assert done["tool_calls"][0]["tool"] == "calculator"
+
+
+async def test_stream_with_orchestrator_no_tools_falls_back(db_session: AsyncSession) -> None:
+    """无可见工具流式回退: 保持逐 token 事件序列."""
+    orc = FakeToolOrchestrator(no_tools=True)
+    events = []
+    async for e in _service(db_session, orchestrator=orc).stream_events(
+        ChatRequest(message="报销流程?", user_id="u1")
+    ):
+        events.append(e)
+
+    types = [e["event"] for e in events]
+    assert types[0] == "retrieval"
+    assert types[-1] == "done"
+    assert sum(1 for t in types if t == "token") == 4  # FakeChatLLM.token_chunks 4 段
+    assert "tool_start" not in types
+
+
+# ── 记忆集成(memory_manager 注入) ──
+
+
+def _memory_service(
+    session: AsyncSession,
+    memory: FakeMemoryManager | None = None,
+    llm: FakeChatLLM | None = None,
+) -> ChatService:
+    return ChatService(
+        session=session,
+        retriever=FakeRetriever(chunks=[_CHUNK]),
+        llm=llm or FakeChatLLM(),
+        memory_manager=memory or FakeMemoryManager(),
+    )
+
+
+async def test_chat_observes_user_and_assistant_messages(db_session: AsyncSession) -> None:
+    """对话中 user/assistant 消息均写入短期记忆."""
+    memory = FakeMemoryManager()
+    resp = await _memory_service(db_session, memory).chat(
+        ChatRequest(message="报销流程是什么?", user_id="u1")
+    )
+
+    roles = [r for _, r, _ in memory.observed]
+    assert roles == ["user", "assistant"]
+    assert memory.observed[0][2] == "报销流程是什么?"
+    assert memory.observed[1][2] == resp.answer
+
+
+async def test_chat_sediments_on_interval(db_session: AsyncSession) -> None:
+    """每 N 轮对话触发一次沉淀(assistant 落库后)."""
+    memory = FakeMemoryManager(interval=5)
+    service = _memory_service(db_session, memory)
+    sid = None
+    for _ in range(5):
+        resp = await service.chat(ChatRequest(message="你好", session_id=sid, user_id="u1"))
+        sid = resp.session_id
+
+    assert len(memory.sediment_calls) == 1
+    assert memory.sediment_calls[0][1] == "u1"
+
+
+async def test_chat_recalls_memory_and_injects_prompt(db_session: AsyncSession) -> None:
+    """对话前召回用户长期记忆, 注入系统提示(直连链路)."""
+    memory = FakeMemoryManager(recalled=[object()], recalled_text="- 用户偏好简洁回答")
+    llm = FakeChatLLM()
+    await _memory_service(db_session, memory, llm).chat(
+        ChatRequest(message="报销流程是什么?", user_id="u1")
+    )
+
+    assert len(memory.recall_calls) == 1
+    assert memory.recall_calls[0] == ("报销流程是什么?", "u1")
+    system = llm.last_messages[0]["content"]
+    assert "用户记忆" in system
+    assert "- 用户偏好简洁回答" in system
+
+
+async def test_chat_no_recall_without_user_id(db_session: AsyncSession) -> None:
+    """无 user_id 时不召回记忆(匿名会话), 记忆文本为空."""
+    memory = FakeMemoryManager()
+    await _memory_service(db_session, memory).chat(ChatRequest(message="你好"))
+    assert memory.recall_calls == []

@@ -294,3 +294,110 @@ class FakeToolCallingLLM:
         resp = self._script[self._idx]
         self._idx += 1
         return resp
+
+
+@dataclass
+class FakeToolOrchestrator:
+    """fake 工具编排器: 固定返回编排结果, 记录 run 调用参数.
+
+    用于 ChatService 工具链路单测, 避免依赖真实 LLM/注册表.
+    """
+
+    answer: str = "这是工具编排的回复。"
+    tool_calls: list[Any] = field(default_factory=list)
+    no_tools: bool = False
+    run_calls: list[dict[str, Any]] = field(default_factory=list)
+
+    async def run(
+        self,
+        query: str,
+        session_id: str | None = None,
+        agent_role: Any = None,
+        history: list[dict[str, str]] | None = None,
+        context: str | None = None,
+        active_skills: list[Any] | None = None,
+    ) -> Any:
+        from knowflow.services.tool_orchestrator import OrchestratorResult
+
+        self.run_calls.append(
+            {
+                "query": query,
+                "session_id": session_id,
+                "history": history,
+                "context": context,
+            }
+        )
+        return OrchestratorResult(
+            answer=self.answer, tool_calls=list(self.tool_calls), no_tools=self.no_tools
+        )
+
+
+class FakeRedisList:
+    """内存 Redis List 桩(短期记忆用): rpush/lrange/expire/delete/llen.
+
+    lrange 支持负数索引(对齐 Redis 语义), expire 为无操作(TTL 语义由真实 Redis 提供).
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[str, list[str]] = {}
+        self.expired: list[tuple[str, int]] = []
+
+    async def rpush(self, key: str, value: str) -> int:
+        self._store.setdefault(key, []).append(value)
+        return len(self._store[key])
+
+    async def lrange(self, key: str, start: int, end: int) -> list[str]:
+        items = self._store.get(key, [])
+        n = len(items)
+        start = max(0, n + start) if start < 0 else start
+        end = (n + end) if end < 0 else min(n - 1, end)
+        return items[start : end + 1]
+
+    async def expire(self, key: str, ttl: int) -> bool:
+        self.expired.append((key, ttl))
+        return key in self._store
+
+    async def delete(self, key: str) -> int:
+        return int(self._store.pop(key, None) is not None)
+
+    async def llen(self, key: str) -> int:
+        return len(self._store.get(key, []))
+
+
+class FakeEmbeddingClient:
+    """固定向量的 fake embedding(长期记忆召回单测用).
+
+    关键词 "报销" 命中向量 [1,0,0], 否则 [0,1,0]; 便于断言相似度排序.
+    """
+
+    def embed_one(self, text: str) -> list[float]:
+        return [1.0, 0.0, 0.0] if "报销" in text else [0.0, 1.0, 0.0]
+
+
+@dataclass
+class FakeMemoryManager:
+    """fake 记忆管理器: 记录观察/沉淀/召回调用, 固定返回召回文本.
+
+    用于 ChatService 记忆集成单测, 避免依赖真实 Redis/PG/LLM.
+    """
+
+    interval: int = 5
+    recalled_text: str = "- 用户偏好简洁回答"
+    recalled: list[Any] = field(default_factory=list)  # 非空时 recall 返回(模拟命中)
+    observed: list[tuple[Any, str, str]] = field(default_factory=list)
+    sediment_calls: list[tuple[Any, str]] = field(default_factory=list)
+    recall_calls: list[tuple[str, str]] = field(default_factory=list)
+
+    async def observe(self, session_id: Any, role: str, content: str) -> None:
+        self.observed.append((session_id, role, content))
+
+    async def sediment(self, session_id: Any, user_id: str) -> int:
+        self.sediment_calls.append((session_id, user_id))
+        return 0
+
+    async def recall(self, query: str, user_id: str, top_k: int | None = None) -> list[Any]:
+        self.recall_calls.append((query, user_id))
+        return list(self.recalled)
+
+    def recall_text(self, hits: list[Any]) -> str:
+        return self.recalled_text if hits else ""
