@@ -1232,3 +1232,78 @@ $env:GIT_COMMITTER_DATE = "2026-06-20T10:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+### 80. feat(context): 新增上下文工程与记忆体系
+
+- **提交时间**：2026-06-21 09:00
+- **说明**：M6（P7）核心模块。context/ 7 文件：token_counter（tiktoken + 字符回退）、budget（系统/历史/工具/检索/记忆 5 模块配额）、window（滑动窗口）、summarizer（LLM 增量摘要 + 规则兜底）、spiller（超阈值写沙盒引用替换，直连 M5 真实沙盒）、builder（段落式组装 + 截断）、strategy（窗口→摘要→卸载→截断编排 + ContextManager 门面）。memory/ 7 文件：short_term（Redis TTL）、importance（LLM 0-10 + 规则兜底）、compressor（LLM 压缩 + 兜底）、store（PG 持久化 + embedding 序列化）、recall（0.7×相似度 + 0.2×重要性 + 0.1×新鲜度时间衰减）、long_term（门面）、manager（观察/每 5 轮沉淀编排）。config 新增记忆三项配置。配套 11 个单测文件（context 26 用例 + memory 31 用例，全离线可测）。
+- **变更文件**：`src/knowflow/context/`（7 文件）、`src/knowflow/memory/`（7 文件）、`src/knowflow/core/config.py`、`src/knowflow/schemas/memory.py`、`tests/unit/context/`（6 文件）、`tests/unit/memory/`（5 文件）
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-21T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-21T09:00:00+08:00"
+git add src/knowflow/context src/knowflow/memory src/knowflow/core/config.py src/knowflow/schemas/memory.py tests/unit/context tests/unit/memory
+git commit -m "feat(context): 新增上下文工程与记忆体系"
+```
+
+---
+
+### 81. feat(tools): 工具编排接入对话链路并新增 benchmark 真实模式
+
+- **提交时间**：2026-06-21 11:00
+- **说明**：补齐 P6 任务 11 缺口——ToolOrchestrator 接入对话链路：`run()` 新增 context（预检索上下文注入）与 active_skills（调用方控制激活集）参数，修复文件类工具 session_id 自动补参（setdefault 替代 in 判断）；chat/chat_stream 端点注入编排器，工具调用记录随响应返回并落库（citations JSON 扩展 tool_calls）；ChatResponse 新增 tool_calls 字段；deps 新增 get_tool_orchestrator 容错懒加载单例。`benchmark_tools.py --mode real` 从提示占位改为真实实现（真实 LLM 经 ToolOrchestrator 跑 33 条场景工具调用循环统计 FC 准确率），场景语义修正（“你好”预期不调用工具，expected_tool 支持 None 双口径判定）。测试文档移除“工具编排器未接入”已知限制并更新通过数。
+- **变更文件**：`src/knowflow/services/tool_orchestrator.py`、`src/knowflow/schemas/chat.py`、`scripts/benchmark_tools.py`、`docs/benchmarks/tool_governance_20260807.md`、`docs/tests/指标测试-工具治理.md`、`docs/tests/指标测试-对话链路.md`、`tests/unit/services/test_tool_orchestrator.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-21T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-21T11:00:00+08:00"
+git add src/knowflow/services/tool_orchestrator.py src/knowflow/schemas/chat.py scripts/benchmark_tools.py docs/benchmarks/tool_governance_20260807.md "docs/tests/指标测试-工具治理.md" "docs/tests/指标测试-对话链路.md" tests/unit/services/test_tool_orchestrator.py
+git commit -m "feat(tools): 工具编排接入对话链路并新增 benchmark 真实模式"
+```
+
+---
+
+### 82. feat(services): 对话链路接入记忆召回与上下文策略
+
+- **提交时间**：2026-06-22 09:00
+- **说明**：ChatService 接入记忆与上下文：对话前召回长期记忆注入系统提示（直连/工具链路均支持），user/assistant 消息观察短期记忆，assistant 落库后按轮次自动沉淀（与 db 事务同批提交）；直连链路优先走 ContextManager（窗口/摘要/预算），无上下文管理器时回退内置组装。memory 端点接入实现（GET 列表 / DELETE 删除 404 兜底 / POST sediment 手动沉淀）；deps 新增 get_context_manager 单例与 EmbeddingDep 依赖；conftest 改用共享 FakeRedisList（短期记忆跨请求一致）并覆盖 embedding/context_manager 依赖；移除 memory 占位 501 测试。
+- **变更文件**：`src/knowflow/services/chat_service.py`、`src/knowflow/api/v1/endpoints/chat.py`、`src/knowflow/api/v1/endpoints/memory.py`、`src/knowflow/api/deps.py`、`tests/conftest.py`、`tests/fakes.py`、`tests/unit/api/test_chat_endpoint.py`、`tests/unit/api/test_memory_endpoint.py`、`tests/unit/api/test_stub_endpoints.py`、`tests/unit/services/test_chat_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-22T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-22T09:00:00+08:00"
+git add src/knowflow/services/chat_service.py src/knowflow/api/v1/endpoints/chat.py src/knowflow/api/v1/endpoints/memory.py src/knowflow/api/deps.py tests/conftest.py tests/fakes.py tests/unit/api/test_chat_endpoint.py tests/unit/api/test_memory_endpoint.py tests/unit/api/test_stub_endpoints.py tests/unit/services/test_chat_service.py
+git commit -m "feat(services): 对话链路接入记忆召回与上下文策略"
+```
+
+---
+
+### 83. docs: 补充 M6 验收文档与演示脚本
+
+- **提交时间**：2026-06-22 11:00
+- **说明**：`docs/tests/指标测试-上下文与记忆.md` 按 AGENTS.md 2.2 编写（5 项验收用例：跨会话记忆召回、自动沉淀、25 轮长对话不超预算、工具结果卸载、单测全量验证，结果表留空待用户实测）；`docs/demo_memory.md` 跨会话记忆一键演示脚本（PowerShell）+ 面试口径原理说明；CHANGELOG 补充 P7 模块与 M6 接入变更。
+- **变更文件**：`docs/tests/指标测试-上下文与记忆.md`、`docs/demo_memory.md`、`CHANGELOG.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-22T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-22T11:00:00+08:00"
+git add "docs/tests/指标测试-上下文与记忆.md" docs/demo_memory.md CHANGELOG.md
+git commit -m "docs: 补充 M6 验收文档与演示脚本"
+```
+
+---
+
+### 84. docs: 更新提交日志
+
+- **提交时间**：2026-06-23 09:00
+- **说明**：记录 M5 完善 + M6（P7）共 4 个业务提交（80-83）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-23T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-23T09:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
