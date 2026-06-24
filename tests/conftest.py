@@ -122,6 +122,8 @@ def client(
     app.dependency_overrides[deps.get_tool_orchestrator] = lambda: None
     # 上下文管理器: 默认关闭(避免构造真实 LLM/MinIO), 上下文策略用例自行注入 fake
     app.dependency_overrides[deps.get_context_manager] = lambda: None
+    # Multi-Agent 编排器: 默认关闭(避免构造真实 PG/LLM), 编排用例自行注入 fake
+    app.dependency_overrides[deps.get_multi_agent_orchestrator] = lambda: None
 
     yield TestClient(app)
 

@@ -14,6 +14,7 @@ from tests.fakes import (
     FakeChatLLM,
     FakeChunkWithScore,
     FakeMemoryManager,
+    FakeMultiAgentOrchestrator,
     FakeRetriever,
     FakeToolOrchestrator,
 )
@@ -27,12 +28,14 @@ def _service(
     session: AsyncSession,
     llm: FakeChatLLM | None = None,
     orchestrator: FakeToolOrchestrator | None = None,
+    multi_agent: FakeMultiAgentOrchestrator | None = None,
 ) -> ChatService:
     return ChatService(
         session=session,
         retriever=FakeRetriever(chunks=[_CHUNK]),
         llm=llm or FakeChatLLM(),
         orchestrator=orchestrator,
+        multi_agent=multi_agent,
     )
 
 
@@ -279,3 +282,59 @@ async def test_chat_no_recall_without_user_id(db_session: AsyncSession) -> None:
     memory = FakeMemoryManager()
     await _memory_service(db_session, memory).chat(ChatRequest(message="你好"))
     assert memory.recall_calls == []
+
+
+# ── Multi-Agent 编排接入 ──
+
+
+async def test_chat_uses_multi_agent_for_complex_task(db_session: AsyncSession) -> None:
+    """复杂任务走多 Agent 编排: 编排答案落库, 不再调直连 LLM."""
+    llm = FakeChatLLM()
+    multi = FakeMultiAgentOrchestrator(answer="A 售价 100, B 售价 200")
+    resp = await _service(db_session, llm, multi_agent=multi).chat(
+        ChatRequest(message="对比 A 和 B 的价格", user_id="u1")
+    )
+
+    assert resp.answer == "A 售价 100, B 售价 200"
+    assert len(resp.citations) == 1  # 检索引用仍返回
+    assert llm.invoke_calls == 0  # 编排链路不调直连 LLM
+    assert len(multi.run_calls) == 1
+    assert multi.run_calls[0]["query"] == "对比 A 和 B 的价格"
+    assert "报销流程" in multi.run_calls[0]["context"]  # 预检索上下文注入
+
+    messages = await MessageRepo(db_session).list_by_session(int(resp.session_id))
+    assert messages[1].content == "A 售价 100, B 售价 200"
+
+
+async def test_chat_falls_back_to_direct_when_intent_simple(db_session: AsyncSession) -> None:
+    """编排器返回 simple 信号(无 answer)时回退直连 LLM 链路."""
+    llm = FakeChatLLM()
+    multi = FakeMultiAgentOrchestrator(intent="simple", answer="")
+    resp = await _service(db_session, llm, multi_agent=multi).chat(
+        ChatRequest(message="你好", user_id="u1")
+    )
+
+    assert resp.answer == llm.answer
+    assert llm.invoke_calls == 1
+    assert len(multi.run_calls) == 1
+
+
+async def test_chat_stream_multi_agent_emits_progress_and_token(db_session: AsyncSession) -> None:
+    """流式链路: 编排结果以 progress + token 事件回传, done 收尾."""
+    multi = FakeMultiAgentOrchestrator(answer="汇总答案")
+    service = _service(db_session, multi_agent=multi)
+    events = [
+        e
+        async for e in service.stream_events(
+            ChatRequest(message="对比 A 和 B 的价格", user_id="u1")
+        )
+    ]
+    types = [e["event"] for e in events]
+    assert "retrieval" in types
+    assert "progress" in types
+    assert "token" in types
+    assert types[-1] == "done"
+    progress = next(e for e in events if e["event"] == "progress")
+    progress_data = json.loads(progress["data"])
+    assert progress_data["stage"] == "multi_agent"
+    assert progress_data["delegated"] is True

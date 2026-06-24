@@ -332,6 +332,35 @@ class FakeToolOrchestrator:
         )
 
 
+@dataclass
+class FakeMultiAgentOrchestrator:
+    """fake 多 Agent 编排器: 固定返回编排结果, 记录 run 调用参数.
+
+    用于 ChatService 多 Agent 链路单测. intent="simple" 时 answer 为空
+    (调用方回退直连链路), 与真实编排器信号约定一致.
+    """
+
+    answer: str = "这是多 Agent 编排的回复。"
+    intent: str = "complex"
+    delegated: bool = True
+    subtasks: list[Any] = field(default_factory=list)
+    run_calls: list[dict[str, Any]] = field(default_factory=list)
+
+    async def run(self, query: str, session_id: int | None = None, context: str = "") -> Any:
+        from knowflow.agents.orchestrator import MultiAgentResult
+
+        self.run_calls.append({"query": query, "session_id": session_id, "context": context})
+        return MultiAgentResult(
+            run_id=1,
+            delegated=self.delegated,
+            answer=self.answer if self.intent == "complex" else "",
+            intent=self.intent,
+            subtasks=list(self.subtasks),
+            checkpoint_id="ckpt-1",
+            latency_ms=10.0,
+        )
+
+
 class FakeRedisList:
     """内存 Redis List 桩(短期记忆用): rpush/lrange/expire/delete/llen.
 

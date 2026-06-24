@@ -4,6 +4,7 @@
 租户/用户上下文先做简单 header 透传, P11 补鉴权细节.
 """
 
+import contextlib
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
@@ -182,11 +183,12 @@ def set_tool_registry(registry: Any) -> None:
 
 def dispose_tools() -> None:
     """释放工具治理单例."""
-    global _skill_manager, _tool_registry, _orchestrator, _context_manager
+    global _skill_manager, _tool_registry, _orchestrator, _context_manager, _multi_agent
     _skill_manager = None
     _tool_registry = None
     _orchestrator = None
     _context_manager = None
+    _multi_agent = None
 
 
 SkillManagerDep = Annotated[Any, Depends(get_skill_manager)]
@@ -273,6 +275,58 @@ def set_context_manager(manager: Any) -> None:
 
 
 ContextManagerDep = Annotated[Any, Depends(get_context_manager)]
+
+
+# ── Multi-Agent 编排器(懒加载单例, 测试可覆盖) ──
+
+_multi_agent: Any = None
+
+
+def get_multi_agent_orchestrator() -> Any:
+    """MultiAgentOrchestrator 单例: 主/子 Agent + checkpoint + session factory 装配.
+
+    依赖未就绪(如 PG 不可用)时返回 None, 对话走直连链路, 不阻塞请求.
+    测试可用 set_multi_agent_orchestrator 注入 fake.
+    """
+    global _multi_agent
+    if _multi_agent is not None:
+        return _multi_agent
+    try:
+        from knowflow.agents.checkpoint import CheckpointManager
+        from knowflow.agents.orchestrator import MultiAgentOrchestrator
+        from knowflow.core.llm import get_chat_llm
+        from knowflow.db.base import get_session_factory
+
+        _multi_agent = MultiAgentOrchestrator(
+            llm=get_chat_llm(),
+            session_factory=get_session_factory(),
+            checkpoints=CheckpointManager(),
+        )
+        logger.info("deps.multi_agent_initialized")
+    except Exception as exc:
+        logger.warning("deps.multi_agent_unavailable", error=str(exc))
+        _multi_agent = None
+    return _multi_agent
+
+
+def set_multi_agent_orchestrator(orchestrator: Any) -> None:
+    """测试注入 multi_agent orchestrator(fake 或 None)."""
+    global _multi_agent
+    _multi_agent = orchestrator
+
+
+async def dispose_multi_agent() -> None:
+    """释放多 Agent 编排器(checkpoint 连接池), 应用关闭时调用."""
+    global _multi_agent
+    if _multi_agent is not None:
+        with contextlib.suppress(Exception):
+            dispose = getattr(_multi_agent, "dispose", None)
+            if dispose is not None:
+                await dispose()
+        _multi_agent = None
+
+
+MultiAgentDep = Annotated[Any, Depends(get_multi_agent_orchestrator)]
 
 
 # ── Embedding 客户端(懒加载单例, 测试可覆盖) ──

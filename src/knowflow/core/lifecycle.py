@@ -68,6 +68,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await _safe_init("redis", dispose_redis)
     await _safe_init("postgres", dispose_engine)
     _dispose_ai_singletons()
+    await _dispose_multi_agent()
     logger.info("lifecycle.stopped")
 
 
@@ -85,3 +86,10 @@ def _dispose_ai_singletons() -> None:
         from knowflow.retrieval.reranker import dispose_reranker
 
         dispose_reranker()
+
+
+async def _dispose_multi_agent() -> None:
+    """释放多 Agent 编排器(checkpoint 连接池), 未加载时无操作."""
+    from knowflow.api.deps import dispose_multi_agent
+
+    await dispose_multi_agent()

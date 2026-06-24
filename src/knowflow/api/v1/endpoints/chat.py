@@ -17,6 +17,7 @@ from knowflow.api.deps import (
     DbDep,
     EmbeddingDep,
     LlmDep,
+    MultiAgentDep,
     OrchestratorDep,
     RedisDep,
     RetrieverDep,
@@ -54,8 +55,9 @@ async def chat(
     redis: RedisDep,
     embedding: EmbeddingDep,
     context_manager: ContextManagerDep,
+    multi_agent: MultiAgentDep,
 ) -> ChatResponse:
-    """同步对话: 检索 → (工具编排/记忆/上下文策略) → LLM 生成 → 落库."""
+    """同步对话: 检索 → (多 Agent 编排/工具编排/记忆/上下文策略) → LLM 生成 → 落库."""
     memory_manager = _build_memory_manager(db, redis, llm, embedding)
     service = ChatService(
         session=db,
@@ -64,6 +66,7 @@ async def chat(
         orchestrator=orchestrator,
         memory_manager=memory_manager,
         context_manager=context_manager,
+        multi_agent=multi_agent,
     )
     return await service.chat(req)
 
@@ -79,8 +82,9 @@ async def chat_stream(
     redis: RedisDep,
     embedding: EmbeddingDep,
     context_manager: ContextManagerDep,
+    multi_agent: MultiAgentDep,
 ) -> EventSourceResponse:
-    """SSE 流式对话: retrieval → [tool_start/tool_end]* → token* → done 事件流(带心跳)."""
+    """SSE 流式对话: retrieval → [progress/tool_start/tool_end]* → token* → done 事件流(带心跳)."""
     memory_manager = _build_memory_manager(db, redis, llm, embedding)
     service = ChatService(
         session=db,
@@ -89,5 +93,6 @@ async def chat_stream(
         orchestrator=orchestrator,
         memory_manager=memory_manager,
         context_manager=context_manager,
+        multi_agent=multi_agent,
     )
     return EventSourceResponse(sse_stream(request, service.stream_events(req)))

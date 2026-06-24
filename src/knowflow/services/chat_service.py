@@ -65,6 +65,7 @@ class ChatService:
         orchestrator: ToolOrchestrator(实现 async run)或 fake. None 时走直连检索链路.
         memory_manager: MemoryManager(观察/沉淀/召回)或 fake. None 时无记忆能力.
         context_manager: ContextManager(窗口/摘要/卸载/预算)或 fake. None 时用内置组装.
+        multi_agent: MultiAgentOrchestrator(实现 async run)或 fake. None 时无多 Agent 编排.
     """
 
     def __init__(
@@ -76,6 +77,7 @@ class ChatService:
         orchestrator: Any | None = None,
         memory_manager: MemoryManager | None = None,
         context_manager: Any | None = None,
+        multi_agent: Any | None = None,
     ) -> None:
         self.session = session
         self.retriever = retriever
@@ -84,6 +86,7 @@ class ChatService:
         self._orchestrator = orchestrator
         self._memory_manager = memory_manager
         self._context_manager = context_manager
+        self._multi_agent = multi_agent
         self._sessions = SessionRepo(session)
         self._messages = MessageRepo(session)
         self._turns = TurnRepo(session)
@@ -227,6 +230,22 @@ class ChatService:
         citations = self._to_citations(result.chunks)
         memory_text = await self._recall_memories(req.message, req.user_id)
 
+        # Multi-Agent 版: 复杂任务(可拆分子任务)走编排(委派/并发/汇总), 否则回退下方链路
+        if self._multi_agent is not None:
+            ma = await self._multi_agent.run(
+                req.message, session_id, context=self._format_context(result.chunks)
+            )
+            if ma.intent == "complex" and ma.answer:
+                return await self._finalize_chat(
+                    session_id,
+                    user_msg,
+                    ma.answer,
+                    citations,
+                    [],
+                    start,
+                    user_id=req.user_id,
+                )
+
         # 工具版: 预检索上下文注入编排器(含记忆), 工具调用后返回最终答案
         if self._orchestrator is not None:
             context = self._format_context(result.chunks)
@@ -355,6 +374,34 @@ class ChatService:
                 },
             )
             memory_text = await self._recall_memories(req.message, req.user_id)
+
+            # Multi-Agent 版: 复杂任务走编排(委派/并发/汇总), 进度与结果以事件回传
+            if self._multi_agent is not None:
+                ma = await self._multi_agent.run(
+                    req.message, session_id, context=self._format_context(result.chunks)
+                )
+                if ma.intent == "complex" and ma.answer:
+                    yield make_event(
+                        "progress",
+                        {
+                            "stage": "multi_agent",
+                            "delegated": ma.delegated,
+                            "subtasks": [s.id for s in ma.subtasks],
+                            "run_id": ma.run_id,
+                        },
+                    )
+                    yield make_event("token", {"delta": ma.answer})
+                    async for event in self._finalize_stream(
+                        session_id,
+                        user_msg,
+                        ma.answer,
+                        citations,
+                        [],
+                        start,
+                        user_id=req.user_id,
+                    ):
+                        yield event
+                    return
 
             # 工具版: 先跑编排器(工具事件在 token 流之前), 无可见工具时回退直连链路
             if self._orchestrator is not None:
