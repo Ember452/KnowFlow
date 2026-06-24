@@ -1,6 +1,6 @@
 """ORM 模型聚合. 导入所有模型让 Alembic autogenerate 能发现."""
 
-from knowflow.models.agent import AgentRun, Checkpoint, TaskDelegation
+from knowflow.models.agent import AgentRun, TaskDelegation
 from knowflow.models.base import Base, IDMixin, JSONBType, TimestampMixin, VectorField
 from knowflow.models.document import Chunk, Document, DocumentIndex
 from knowflow.models.eval import EvalDataset, EvalResult, EvalRun
@@ -13,7 +13,6 @@ from knowflow.models.trace import TraceEvent, TraceSpan
 __all__ = [
     "AgentRun",
     "Base",
-    "Checkpoint",
     "Chunk",
     "Document",
     "DocumentIndex",

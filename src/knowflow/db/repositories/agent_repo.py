@@ -1,4 +1,8 @@
-"""AgentRun / TaskDelegation / Checkpoint 数据访问层."""
+"""AgentRun / TaskDelegation 数据访问层.
+
+checkpoint 由 LangGraph PostgresSaver 原生表接管(见 docs/adr/0004),
+lineage 查询在 agents/checkpoint.py 的 CheckpointManager 中实现.
+"""
 
 from collections.abc import Sequence
 from datetime import datetime
@@ -6,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from knowflow.models.agent import AgentRun, Checkpoint, TaskDelegation
+from knowflow.models.agent import AgentRun, TaskDelegation
 
 
 class AgentRunRepo:
@@ -123,6 +127,7 @@ class TaskDelegationRepo:
         status: str,
         result: dict | None = None,
         checkpoint_id: str | None = None,
+        child_run_id: int | None = None,
     ) -> bool:
         """更新委派状态与结果. 返回是否命中."""
         delegation = await self.get(delegation_id)
@@ -133,58 +138,7 @@ class TaskDelegationRepo:
             delegation.result = result
         if checkpoint_id is not None:
             delegation.checkpoint_id = checkpoint_id
+        if child_run_id is not None:
+            delegation.child_run_id = child_run_id
         await self.session.flush()
         return True
-
-
-class CheckpointRepo:
-    """LangGraph checkpoint CRUD."""
-
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def save(
-        self,
-        *,
-        checkpoint_id: str,
-        agent_run_id: int,
-        state: dict,
-        parent_checkpoint_id: str | None = None,
-    ) -> Checkpoint:
-        """保存 checkpoint. checkpoint_id 由 LangGraph 生成(UUID)."""
-        ckpt = Checkpoint(
-            id=checkpoint_id,
-            agent_run_id=agent_run_id,
-            state=state,
-            parent_checkpoint_id=parent_checkpoint_id,
-        )
-        self.session.add(ckpt)
-        await self.session.flush()
-        return ckpt
-
-    async def get(self, checkpoint_id: str) -> Checkpoint | None:
-        """按主键查 checkpoint."""
-        return await self.session.get(Checkpoint, checkpoint_id)
-
-    async def list_by_run(self, agent_run_id: int) -> Sequence[Checkpoint]:
-        """按运行实例列出 checkpoint, 按创建时间升序."""
-        stmt = (
-            select(Checkpoint)
-            .where(Checkpoint.agent_run_id == agent_run_id)
-            .order_by(Checkpoint.created_at.asc())
-        )
-        result = await self.session.execute(stmt)
-        return result.scalars().all()
-
-    async def lineage(self, checkpoint_id: str) -> list[Checkpoint]:
-        """查询父子链路(用于 replay). 从当前向上回溯到根 checkpoint."""
-        lineage: list[Checkpoint] = []
-        current = await self.get(checkpoint_id)
-        seen: set[str] = set()
-        while current is not None and current.id not in seen:
-            seen.add(current.id)
-            lineage.append(current)
-            if current.parent_checkpoint_id is None:
-                break
-            current = await self.get(current.parent_checkpoint_id)
-        return lineage

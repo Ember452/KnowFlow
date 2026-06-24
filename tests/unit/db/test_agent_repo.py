@@ -1,14 +1,10 @@
-"""AgentRunRepo / TaskDelegationRepo / CheckpointRepo 单测, 重点验证父子链路."""
+"""AgentRunRepo / TaskDelegationRepo 单测, 重点验证父子链路."""
 
 from datetime import UTC, datetime
 
 import pytest
 
-from knowflow.db.repositories.agent_repo import (
-    AgentRunRepo,
-    CheckpointRepo,
-    TaskDelegationRepo,
-)
+from knowflow.db.repositories.agent_repo import AgentRunRepo, TaskDelegationRepo
 from knowflow.db.repositories.session_repo import SessionRepo
 
 
@@ -100,79 +96,3 @@ async def test_task_delegation_update_status(db_session) -> None:  # type: ignor
     assert fetched.checkpoint_id == "ckpt-1"
 
     assert await del_repo.update_status(99999, "completed") is False
-
-
-@pytest.mark.asyncio
-async def test_checkpoint_save_and_get(db_session) -> None:  # type: ignore[no-untyped-def]
-    sess_repo = SessionRepo(db_session)
-    run_repo = AgentRunRepo(db_session)
-    ckpt_repo = CheckpointRepo(db_session)
-    sess = await sess_repo.create(user_id="u1")
-    run = await run_repo.create(session_id=sess.id, agent_type="main")
-    await db_session.commit()
-
-    state = {"messages": ["hello"], "step": 1}
-    ckpt = await ckpt_repo.save(checkpoint_id="ckpt-1", agent_run_id=run.id, state=state)
-    await db_session.commit()
-
-    fetched = await ckpt_repo.get("ckpt-1")
-    assert fetched is not None
-    assert fetched.id == ckpt.id
-    assert fetched.state == state
-    assert fetched.agent_run_id == run.id
-
-
-@pytest.mark.asyncio
-async def test_checkpoint_lineage_walks_up(db_session) -> None:  # type: ignore[no-untyped-def]
-    """lineage 应从当前向根回溯, 顺序为 [child, parent, root]."""
-    sess_repo = SessionRepo(db_session)
-    run_repo = AgentRunRepo(db_session)
-    ckpt_repo = CheckpointRepo(db_session)
-    sess = await sess_repo.create(user_id="u1")
-    run = await run_repo.create(session_id=sess.id, agent_type="main")
-    await db_session.commit()
-
-    await ckpt_repo.save(checkpoint_id="root", agent_run_id=run.id, state={"step": 0})
-    await ckpt_repo.save(
-        checkpoint_id="mid",
-        agent_run_id=run.id,
-        state={"step": 1},
-        parent_checkpoint_id="root",
-    )
-    await ckpt_repo.save(
-        checkpoint_id="leaf",
-        agent_run_id=run.id,
-        state={"step": 2},
-        parent_checkpoint_id="mid",
-    )
-    await db_session.commit()
-
-    lineage = await ckpt_repo.lineage("leaf")
-    assert [c.id for c in lineage] == ["leaf", "mid", "root"]
-    assert lineage[-1].parent_checkpoint_id is None
-
-
-@pytest.mark.asyncio
-async def test_checkpoint_lineage_handles_missing(db_session) -> None:  # type: ignore[no-untyped-def]
-    """不存在的 checkpoint_id 返回空链路."""
-    ckpt_repo = CheckpointRepo(db_session)
-    assert await ckpt_repo.lineage("not-exists") == []
-
-
-@pytest.mark.asyncio
-async def test_checkpoint_lineage_single_node_no_parent(db_session) -> None:  # type: ignore[no-untyped-def]
-    """根 checkpoint 的 lineage 只含自身, 不死循环."""
-    sess_repo = SessionRepo(db_session)
-    run_repo = AgentRunRepo(db_session)
-    ckpt_repo = CheckpointRepo(db_session)
-    sess = await sess_repo.create(user_id="u1")
-    run = await run_repo.create(session_id=sess.id, agent_type="main")
-    await db_session.commit()
-
-    await ckpt_repo.save(checkpoint_id="root", agent_run_id=run.id, state={"step": 0})
-    await db_session.commit()
-
-    lineage = await ckpt_repo.lineage("root")
-    assert len(lineage) == 1
-    assert lineage[0].id == "root"
-    assert lineage[0].parent_checkpoint_id is None

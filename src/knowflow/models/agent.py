@@ -1,19 +1,12 @@
-"""Agent 编排模型. AgentRun / TaskDelegation / Checkpoint.
+"""Agent 编排模型. AgentRun / TaskDelegation.
 
-与设计文档 3.4 模块三一致, 这三张表用 started_at/completed_at/created_at.
+与设计文档 3.4 模块三一致, 这两张表用 started_at/completed_at/created_at.
+Checkpoint 由 LangGraph PostgresSaver 原生表接管, 见 docs/adr/0004-langgraph-checkpoint.md.
 """
 
 from datetime import datetime
 
-from sqlalchemy import (
-    BigInteger,
-    DateTime,
-    ForeignKey,
-    Index,
-    String,
-    Text,
-    func,
-)
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from knowflow.models.base import Base, IDMixin, JSONBType
@@ -60,23 +53,3 @@ class TaskDelegation(Base, IDMixin):
     )
 
     __table_args__ = (Index("idx_delegations_parent", "parent_run_id"),)
-
-
-class Checkpoint(Base):
-    """LangGraph checkpoint. P8 接 PostgresSaver, 此处先建表对齐设计."""
-
-    __tablename__ = "checkpoints"
-
-    id: Mapped[str] = mapped_column(String(128), primary_key=True, comment="UUID")
-    agent_run_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
-    )
-    parent_checkpoint_id: Mapped[str | None] = mapped_column(
-        String(128), ForeignKey("checkpoints.id", ondelete="SET NULL"), nullable=True
-    )
-    state: Mapped[dict] = mapped_column(JSONBType, nullable=False, comment="序列化 AgentState")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-    __table_args__ = (Index("idx_checkpoints_run", "agent_run_id"),)

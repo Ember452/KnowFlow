@@ -94,12 +94,25 @@ class Settings(BaseSettings):
     task_max_retries: int = 3
     task_block_ms: int = 5000  # XREADGROUP 阻塞毫秒
 
+    # ── Multi-Agent 编排 ──
+    agent_timeout_seconds: int = 60  # 子 Agent 执行超时(秒)
+    agent_max_subtasks: int = 5  # 主 Agent 最大委派子任务数
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def postgres_dsn(self) -> str:
         """异步 PG 连接串(asyncpg 驱动)."""
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def postgres_psycopg_dsn(self) -> str:
+        """PG 连接串(psycopg 驱动, LangGraph AsyncPostgresSaver 用)."""
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
