@@ -1307,3 +1307,78 @@ $env:GIT_COMMITTER_DATE = "2026-06-23T09:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+### 85. feat(agents): 新增 Multi-Agent 编排核心模块并切换 LangGraph checkpoint
+
+- **提交时间**：2026-06-24 09:00
+- **说明**：M7（P8）核心模块。agents/ 10 文件：state（AgentState TypedDict，含 intent 字段）、base（BaseAgent 抽象 decide/act/observe）、registry（主/子 Agent 注册表）、prompts（规划/汇总/子 Agent 模板）、delegation（TaskDelegation 协议状态机 created→delegated→running→completed/failed，非法转换拦截）、concurrent（asyncio.gather + wait_for 超时 + 单任务失败降级）、checkpoint（CheckpointManager 封装 AsyncPostgresSaver：save/restore/lineage，uuid1 时间有序 id + state 单 channel 存储，兼容 InMemorySaver）、main_agent（understand 规则意图分类 + LLM 规划 JSON 解析重试降级 + 汇总/直答）、subagent（独立上下文执行委派任务）、orchestrator（MultiAgentOrchestrator：simple 直连信号 / complex 建 run 走状态机，子 runs + delegations 落库，execute 里程碑 checkpoint）、graph（LangGraph 状态机 START→understand→plan→[execute|summarize]→END 条件路由）。同步完成 checkpoint 存储切换：P2 遗留 ORM checkpoints 表与 PostgresSaver 原生表同名冲突且结构不兼容，决策采用 LangGraph 原生表（用户确认方案 A）——删除 ORM Checkpoint 模型与 CheckpointRepo，新增迁移 0002 删除旧表（LangGraph 表由 saver.setup() 自动创建），lineage 沿原生 parent_config 回溯，ADR 0004 记录决策；agent_repo 的 update_status 支持 child_run_id 落库。config 新增 agent_timeout_seconds / agent_max_subtasks / postgres_psycopg_dsn；新增依赖 langgraph-checkpoint-postgres + psycopg[binary]。配套 7 个单测文件 48 用例（concurrent 超时/降级、checkpoint 序列化/恢复/lineage、委派状态机、规划解析、编排全链路、graph 路由、repo 调整）。
+- **变更文件**：`src/knowflow/agents/`（state/base/registry/prompts/delegation/concurrent/checkpoint/main_agent/subagent/orchestrator/graph）、`src/knowflow/models/agent.py`、`src/knowflow/models/__init__.py`、`src/knowflow/db/repositories/agent_repo.py`、`src/knowflow/db/repositories/__init__.py`、`src/knowflow/db/migrations/versions/0002_drop_legacy_checkpoints.py`、`src/knowflow/core/config.py`、`pyproject.toml`、`uv.lock`、`docs/adr/0004-langgraph-checkpoint.md`、`tests/unit/agents/`（test_checkpoint/test_concurrent/test_delegation/test_main_agent/test_orchestrator/test_subagent）、`tests/unit/db/test_agent_repo.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-24T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-24T09:00:00+08:00"
+git add src/knowflow/agents/ src/knowflow/models/agent.py src/knowflow/models/__init__.py src/knowflow/db/repositories/ src/knowflow/db/migrations/versions/0002_drop_legacy_checkpoints.py src/knowflow/core/config.py pyproject.toml uv.lock docs/adr/0004-langgraph-checkpoint.md tests/unit/agents/ tests/unit/db/test_agent_repo.py
+git commit -m "feat(agents): 新增 Multi-Agent 编排核心模块并切换 LangGraph checkpoint"
+```
+
+---
+
+### 86. feat(services): 对话链路接入多 Agent 编排并实现 agent 端点
+
+- **提交时间**：2026-06-24 11:00
+- **说明**：ChatService 接入 MultiAgentOrchestrator（构造参数 multi_agent）：同步/流式链路在检索后先跑编排，复杂任务（intent=complex 且有 answer）用编排结果落库，simple 信号回退直连/工具链路；SSE 新增 progress 事件（stage=multi_agent，含 delegated/subtasks/run_id）。deps 新增 get_multi_agent_orchestrator 容错懒加载单例（依赖未就绪返回 None）+ set_multi_agent_orchestrator + dispose_multi_agent；chat 端点注入 MultiAgentDep。agent 端点实现 GET /agents/runs/{run_id}（父子 run + 委派链，404 兜底），schemas/agent.py 字段对齐模型并开启 from_attributes。lifecycle shutdown 释放编排器 checkpoint 连接池。conftest 默认覆盖 multi_agent 依赖为 None；fakes 新增 FakeMultiAgentOrchestrator；补充 chat 多 Agent 链路 3 用例与 agent 端点 2 用例，stub 测试移除 agent 501。
+- **变更文件**：`src/knowflow/services/chat_service.py`、`src/knowflow/api/deps.py`、`src/knowflow/api/v1/endpoints/chat.py`、`src/knowflow/api/v1/endpoints/agent.py`、`src/knowflow/schemas/agent.py`、`src/knowflow/core/lifecycle.py`、`tests/conftest.py`、`tests/fakes.py`、`tests/unit/services/test_chat_service.py`、`tests/unit/api/test_agent_endpoint.py`、`tests/unit/api/test_stub_endpoints.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-24T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-24T11:00:00+08:00"
+git add src/knowflow/services/chat_service.py src/knowflow/api/deps.py src/knowflow/api/v1/endpoints/chat.py src/knowflow/api/v1/endpoints/agent.py src/knowflow/schemas/agent.py src/knowflow/core/lifecycle.py tests/conftest.py tests/fakes.py tests/unit/services/test_chat_service.py tests/unit/api/test_agent_endpoint.py tests/unit/api/test_stub_endpoints.py
+git commit -m "feat(services): 对话链路接入多 Agent 编排并实现 agent 端点"
+```
+
+---
+
+### 87. feat(eval): 新增多 Agent 并发 benchmark 脚本与报告
+
+- **提交时间**：2026-06-25 09:00
+- **说明**：scripts/benchmark_multiagent.py：静态模式（默认）用真实并发执行器（run_concurrent）执行模拟子任务（2/3/5/8 个子任务，延迟覆盖真实检索/工具调用量级 1.2-2.2s），对比串行/并发实测耗时输出下降率；真实模式（--mode real）由 MultiAgentOrchestrator 跑真实委派链路（需 LLM+PG）。实测均值下降 65.8%、最佳 84.1%，达标 >= 60%（目标 77.6%）；报告 docs/benchmarks/multiagent_20260807.md（方法/明细/结论，面试证据）。
+- **变更文件**：`scripts/benchmark_multiagent.py`、`docs/benchmarks/multiagent_20260807.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-25T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-25T09:00:00+08:00"
+git add scripts/benchmark_multiagent.py docs/benchmarks/multiagent_20260807.md
+git commit -m "feat(eval): 新增多 Agent 并发 benchmark 脚本与报告"
+```
+
+---
+
+### 88. docs: 补充 M7 验收文档与演示脚本
+
+- **提交时间**：2026-06-25 11:00
+- **说明**：`docs/tests/指标测试-multiagent.md` 按 AGENTS.md 2.2 编写（6 项验收用例：复杂任务委派、状态机可见性、简单问答直连、失败降级、断点续跑、并发耗时下降，结果表留空待用户实测）；`docs/demo_checkpoint.md` 断点续跑一键演示（restore + lineage 命令）与面试口径；CHANGELOG 补充 P8 模块与 M7 接入/checkpoint 切换变更；.env.example 补充 KNOWFLOW_AGENT_* 配置项。
+- **变更文件**：`docs/tests/指标测试-multiagent.md`、`docs/demo_checkpoint.md`、`CHANGELOG.md`、`.env.example`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-25T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-25T11:00:00+08:00"
+git add "docs/tests/指标测试-multiagent.md" docs/demo_checkpoint.md CHANGELOG.md .env.example
+git commit -m "docs: 补充 M7 验收文档与演示脚本"
+```
+
+---
+
+### 89. docs: 更新提交日志
+
+- **提交时间**：2026-06-26 09:00
+- **说明**：记录 M7（P8）共 4 个业务提交（85-88）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-26T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-26T09:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
