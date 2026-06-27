@@ -1382,3 +1382,32 @@ $env:GIT_COMMITTER_DATE = "2026-06-26T09:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+
+### 90. fix(agents): 修复多 Agent 编排失败降级与直答历史丢失
+
+- **提交时间**：2026-06-27 09:00
+- **说明**：修复 M7 审查发现的三个问题：(1) 编排运行时失败无降级——chat_service 对 multi_agent.run 包 try/except，失败回退直连链路（同步与 SSE 两处），MainAgent.plan 异常捕获面由 (ValueError/KeyError/TypeError) 扩为 Exception（LLM 网络/限流异常也重试后降级为不委派，不阻塞对话）；(2) 主 Agent 直答丢失多轮历史——MultiAgentOrchestrator.run 新增 history 参数注入状态机，direct_answer 拼装 system + 历史 + 当前问题；(3) 隐藏 bug——AgentState schema 缺 retrieval_context/history 字段，LangGraph 静默丢弃 schema 外键，导致预检索上下文从未进入子 Agent/直答链路，已在 state.py 补齐并加回归断言。另统一委派终态更新走 TaskDelegation 状态机协议（complete/fail），子任务结果统一标注里程碑 checkpoint_id。
+- **变更文件**：`src/knowflow/agents/main_agent.py`、`src/knowflow/agents/orchestrator.py`、`src/knowflow/agents/state.py`、`src/knowflow/services/chat_service.py`、`tests/fakes.py`、`tests/unit/agents/test_main_agent.py`、`tests/unit/agents/test_orchestrator.py`、`tests/unit/services/test_chat_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-27T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-27T09:00:00+08:00"
+git add src/knowflow/agents/main_agent.py src/knowflow/agents/orchestrator.py src/knowflow/agents/state.py src/knowflow/services/chat_service.py tests/fakes.py tests/unit/agents/test_main_agent.py tests/unit/agents/test_orchestrator.py tests/unit/services/test_chat_service.py
+git commit -m "fix(agents): 修复多 Agent 编排失败降级与直答历史丢失"
+```
+
+---
+
+### 91. docs: 更新提交日志
+
+- **提交时间**：2026-06-27 10:00
+- **说明**：记录本次修复批次（90）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-27T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-27T10:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
