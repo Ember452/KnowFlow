@@ -21,6 +21,8 @@ class AgentState(TypedDict, total=False):
     - agent_role: 当前角色 main/sub
     - session_id: 会话 id(落库用)
     - run_id: 主 Agent run id(thread_id 关联 checkpoint)
+    - retrieval_context: 预检索上下文文本(子 Agent/直答注入)
+    - history: 最近对话历史(主 Agent 直答链路保持多轮上下文)
     - final_answer: 最终汇总答案
     """
 
@@ -35,4 +37,6 @@ class AgentState(TypedDict, total=False):
     agent_role: str
     session_id: int | None
     run_id: int | None
+    retrieval_context: str
+    history: list[dict[str, str]]
     final_answer: str

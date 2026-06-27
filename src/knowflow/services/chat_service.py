@@ -232,10 +232,18 @@ class ChatService:
 
         # Multi-Agent 版: 复杂任务(可拆分子任务)走编排(委派/并发/汇总), 否则回退下方链路
         if self._multi_agent is not None:
-            ma = await self._multi_agent.run(
-                req.message, session_id, context=self._format_context(result.chunks)
-            )
-            if ma.intent == "complex" and ma.answer:
+            try:
+                ma = await self._multi_agent.run(
+                    req.message,
+                    session_id,
+                    context=self._format_context(result.chunks),
+                    history=history,
+                )
+            except Exception as exc:
+                # 编排失败(如 checkpoint PG 不可用)不阻塞对话, 回退直连链路
+                logger.warning("chat.multi_agent_failed_fallback", error=str(exc))
+                ma = None
+            if ma is not None and ma.intent == "complex" and ma.answer:
                 return await self._finalize_chat(
                     session_id,
                     user_msg,
@@ -377,10 +385,18 @@ class ChatService:
 
             # Multi-Agent 版: 复杂任务走编排(委派/并发/汇总), 进度与结果以事件回传
             if self._multi_agent is not None:
-                ma = await self._multi_agent.run(
-                    req.message, session_id, context=self._format_context(result.chunks)
-                )
-                if ma.intent == "complex" and ma.answer:
+                try:
+                    ma = await self._multi_agent.run(
+                        req.message,
+                        session_id,
+                        context=self._format_context(result.chunks),
+                        history=history,
+                    )
+                except Exception as exc:
+                    # 编排失败(如 checkpoint PG 不可用)不中断 SSE, 回退直连链路
+                    logger.warning("chat.stream_multi_agent_failed_fallback", error=str(exc))
+                    ma = None
+                if ma is not None and ma.intent == "complex" and ma.answer:
                     yield make_event(
                         "progress",
                         {

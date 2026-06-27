@@ -135,7 +135,8 @@ class MainAgent(BaseAgent):
                     reason=str(data.get("reason", "")),
                     subtasks=subtasks,
                 )
-            except (ValueError, KeyError, TypeError) as exc:
+            except Exception as exc:
+                # 覆盖解析异常与 LLM 调用异常(网络/限流等): 重试后降级不委派, 不阻塞对话
                 last_error = f"{type(exc).__name__}: {exc}"
                 logger.warning(
                     "main_agent.plan_retry",
@@ -155,15 +156,24 @@ class MainAgent(BaseAgent):
         response = await self._get_llm().ainvoke(prompt)
         return _extract_text(response).strip()
 
-    async def direct_answer(self, query: str, context: str = "") -> str:
-        """无委派时直接回答(注入检索上下文)."""
+    async def direct_answer(
+        self,
+        query: str,
+        context: str = "",
+        history: list[dict[str, str]] | None = None,
+    ) -> str:
+        """无委派时直接回答(注入检索上下文与最近对话历史)."""
         system = (
             "你是 KnowFlow 企业知识库助手, 基于检索上下文回答问题, 不要编造事实.\n\n"
             f"检索上下文:\n{context}"
             if context
             else "你是 KnowFlow 企业知识库助手, 请直接回答问题."
         )
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": query}]
+        messages = [
+            {"role": "system", "content": system},
+            *(history or []),
+            {"role": "user", "content": query},
+        ]
         response = await self._get_llm().ainvoke(messages)
         return _extract_text(response).strip()
 

@@ -338,3 +338,49 @@ async def test_chat_stream_multi_agent_emits_progress_and_token(db_session: Asyn
     progress_data = json.loads(progress["data"])
     assert progress_data["stage"] == "multi_agent"
     assert progress_data["delegated"] is True
+
+
+async def test_chat_multi_agent_failure_falls_back_to_direct(db_session: AsyncSession) -> None:
+    """编排运行失败(如 checkpoint PG 不可用)时回退直连链路, 不中断对话."""
+    llm = FakeChatLLM()
+    multi = FakeMultiAgentOrchestrator(raise_failure=True)
+    resp = await _service(db_session, llm, multi_agent=multi).chat(
+        ChatRequest(message="对比 A 和 B 的价格", user_id="u1")
+    )
+
+    assert resp.answer == llm.answer  # 直连链路兜底
+    assert llm.invoke_calls == 1
+    assert len(multi.run_calls) == 1  # 编排确实被调用过, 只是失败降级
+
+
+async def test_chat_stream_multi_agent_failure_falls_back(db_session: AsyncSession) -> None:
+    """流式链路: 编排失败回退直连, 事件序列仍以 done 收尾(无 progress)."""
+    llm = FakeChatLLM()
+    multi = FakeMultiAgentOrchestrator(raise_failure=True)
+    service = _service(db_session, llm, multi_agent=multi)
+    events = [
+        e
+        async for e in service.stream_events(
+            ChatRequest(message="对比 A 和 B 的价格", user_id="u1")
+        )
+    ]
+    types = [e["event"] for e in events]
+    assert "progress" not in types
+    assert "token" in types
+    assert types[-1] == "done"
+
+
+async def test_chat_multi_agent_receives_history(db_session: AsyncSession) -> None:
+    """编排器收到最近对话历史(主 Agent 直答链路保持多轮上下文)."""
+    llm = FakeChatLLM()
+    multi = FakeMultiAgentOrchestrator()
+    service = _service(db_session, llm, multi_agent=multi)
+    first = await service.chat(ChatRequest(message="第一问", user_id="u1"))
+    await service.chat(
+        ChatRequest(message="对比 A 和 B 的价格", session_id=first.session_id, user_id="u1")
+    )
+
+    history = multi.run_calls[-1]["history"]
+    assert history  # 历史非空
+    assert any(m["role"] == "user" and "第一问" in m["content"] for m in history)
+    assert any(m["role"] == "assistant" for m in history)

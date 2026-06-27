@@ -149,6 +149,11 @@ async def test_run_delegation_full_chain(session_factory: async_sessionmaker[Asy
     assert len(chain) >= 3  # start/plan/execute(里程碑) 至少三节点
     assert chain[0]["metadata"]["node"] == "execute"
 
+    # 预检索上下文真正进入子 Agent(regression: schema 外键曾被 LangGraph 丢弃)
+    sub_calls = [c for c in llm.calls if isinstance(c, list)]
+    assert sub_calls, "子 Agent 应收到消息列表"
+    assert any("产品资料" in str(c) for c in sub_calls)
+
 
 @pytest.mark.asyncio
 async def test_run_llm_no_delegation_direct(
@@ -170,6 +175,31 @@ async def test_run_llm_no_delegation_direct(
         assert await run_repo.list_children(int(result.run_id)) == []
         del_repo = TaskDelegationRepo(session)
         assert await del_repo.list_by_parent(int(result.run_id)) == []
+
+
+@pytest.mark.asyncio
+async def test_run_direct_answer_injects_history(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """直答链路注入最近对话历史(多轮上下文保持)."""
+    llm = RoutingFakeLLM(plan_json=PLAN_DIRECT)
+    orc = _build_orchestrator(llm, session_factory)
+    session_id = await _create_session(session_factory)
+    history = [
+        {"role": "user", "content": "第一问"},
+        {"role": "assistant", "content": "第一答"},
+    ]
+
+    result = await orc.run(
+        "对比 A 和 B 的价格", session_id=session_id, context="资料", history=history
+    )
+    assert result.answer == "直答答案"
+    # 最后一次调用为直答(消息列表形态), 含 system + 历史 + 当前问题
+    direct_call = llm.calls[-1]
+    assert isinstance(direct_call, list)
+    assert len(direct_call) == 4
+    assert direct_call[1:3] == history
+    assert direct_call[-1] == {"role": "user", "content": "对比 A 和 B 的价格"}
 
 
 # ── 降级 ──

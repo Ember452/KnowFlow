@@ -132,6 +132,41 @@ async def test_direct_answer_with_context() -> None:
     assert "报销需填表" in system
 
 
+@pytest.mark.asyncio
+async def test_direct_answer_with_history() -> None:
+    """直答注入最近对话历史(多轮省略语境可追溯)."""
+    llm = FakeLLM(["直接答案"])
+    agent = MainAgent(llm=llm)
+    history = [
+        {"role": "user", "content": "对比 A 和 B 的价格"},
+        {"role": "assistant", "content": "A 100, B 200"},
+    ]
+    answer = await agent.direct_answer("那 C 呢", context="产品资料", history=history)
+    assert answer == "直接答案"
+    messages = llm.calls[0]
+    # system + 历史 2 条 + 当前问题
+    assert len(messages) == 4
+    assert messages[1:3] == history
+    assert messages[-1] == {"role": "user", "content": "那 C 呢"}
+
+
+@pytest.mark.asyncio
+async def test_plan_degrades_when_llm_raises() -> None:
+    """LLM 调用抛异常(网络/限流)时重试后降级为不委派, 不阻塞对话."""
+
+    class RaisingLLM:
+        """每次调用都抛 RuntimeError 的 fake LLM."""
+
+        async def ainvoke(self, prompt: object) -> str:
+            raise RuntimeError("LLM API 连接失败")
+
+    agent = MainAgent(llm=RaisingLLM())
+    plan = await agent.plan("对比 A 和 B")
+    assert plan.needs_delegation is False
+    assert "规划解析失败" in plan.reason
+    assert "LLM API 连接失败" in plan.reason
+
+
 # ── decide/act/observe 三步循环 ──
 
 

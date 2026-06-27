@@ -344,12 +344,23 @@ class FakeMultiAgentOrchestrator:
     intent: str = "complex"
     delegated: bool = True
     subtasks: list[Any] = field(default_factory=list)
+    raise_failure: bool = False
     run_calls: list[dict[str, Any]] = field(default_factory=list)
 
-    async def run(self, query: str, session_id: int | None = None, context: str = "") -> Any:
+    async def run(
+        self,
+        query: str,
+        session_id: int | None = None,
+        context: str = "",
+        history: list[dict[str, str]] | None = None,
+    ) -> Any:
         from knowflow.agents.orchestrator import MultiAgentResult
 
-        self.run_calls.append({"query": query, "session_id": session_id, "context": context})
+        self.run_calls.append(
+            {"query": query, "session_id": session_id, "context": context, "history": history}
+        )
+        if self.raise_failure:
+            raise RuntimeError("checkpoint PG 不可用")
         return MultiAgentResult(
             run_id=1,
             delegated=self.delegated,

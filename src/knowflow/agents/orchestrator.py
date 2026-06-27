@@ -81,13 +81,20 @@ class MultiAgentOrchestrator:
 
     # ── 对外入口 ──
 
-    async def run(self, query: str, session_id: int | None, context: str = "") -> MultiAgentResult:
+    async def run(
+        self,
+        query: str,
+        session_id: int | None,
+        context: str = "",
+        history: list[dict[str, str]] | None = None,
+    ) -> MultiAgentResult:
         """编排入口.
 
         Args:
             query: 用户问题.
             session_id: 会话 id(agent_runs 落库; 直连信号时可不传).
             context: 预检索上下文文本(chat_service 检索后注入).
+            history: 最近对话历史(主 Agent 直答链路注入, 保持多轮上下文).
 
         Returns:
             MultiAgentResult. intent=simple 时 answer 为空(调用方走直连检索链路);
@@ -114,6 +121,7 @@ class MultiAgentOrchestrator:
                 "session_id": int(session_id),
                 "run_id": int(main_run.id),
                 "retrieval_context": context,
+                "history": history or [],
                 "agent_role": "main",
                 "context_budget": self._settings.context_budget_tokens,
                 "active_skills": [],
@@ -217,30 +225,22 @@ class MultiAgentOrchestrator:
             thread_id,
             metadata={"node": "execute", "run_id": state["run_id"]},
         )
+        # 子任务结果统一标注里程碑 checkpoint(断点续跑定位用)
+        for info in infos:
+            info.checkpoint_id = milestone
         async with self._session_factory() as session:
             run_repo = AgentRunRepo(session)
-            del_repo = TaskDelegationRepo(session)
             for (_, sub_run_id, delegation), info in zip(delegations, infos, strict=True):
-                # 子 run 终态与委派终态同步更新
+                # 子 run 终态与委派终态同步更新(经状态机协议, 保证转换合法)
                 await run_repo.mark_completed(
                     sub_run_id,
                     "completed" if info.success else "failed",
                     completed_at=datetime.now(UTC),
                 )
                 if info.success:
-                    await del_repo.update_status(
-                        delegation.delegation_id,
-                        "completed",
-                        result={"output": info.output},
-                        checkpoint_id=milestone,
-                    )
+                    await delegation.complete({"output": info.output}, checkpoint_id=milestone)
                 else:
-                    await del_repo.update_status(
-                        delegation.delegation_id,
-                        "failed",
-                        result={"error": info.error},
-                        checkpoint_id=milestone,
-                    )
+                    await delegation.fail(info.error or "未知错误")
             await session.commit()
 
         return {"subtask_results": [asdict(i) for i in infos]}
@@ -252,7 +252,7 @@ class MultiAgentOrchestrator:
         if state.get("needs_delegation"):
             answer = await self._main_agent.summarize(query, state.get("subtask_results", []))
         else:
-            answer = await self._main_agent.direct_answer(query, context)
+            answer = await self._main_agent.direct_answer(query, context, state.get("history"))
         return {"final_answer": answer}
 
     # ── 内部 ──
