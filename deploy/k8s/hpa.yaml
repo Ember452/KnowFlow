@@ -1,0 +1,30 @@
+# KnowFlow API 水平扩缩容(HPA)
+# 前提: 集群已安装 metrics-server(CPU 指标采集)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: knowflow-api
+  namespace: knowflow
+  labels:
+    app.kubernetes.io/name: knowflow
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: knowflow-api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

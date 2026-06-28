@@ -1,0 +1,44 @@
+# KnowFlow 索引 Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowflow-worker
+  namespace: knowflow
+  labels:
+    app.kubernetes.io/name: knowflow
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: knowflow
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: knowflow
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/ember452/knowflow/knowflow-api:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "worker.main"]
+          envFrom:
+            - configMapRef:
+                name: knowflow-config
+            - secretRef:
+                name: knowflow-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          livenessProbe:
+            # Worker 无 HTTP 端口, 用 exec 探活进程存在性
+            exec:
+              command: ["python", "-c", "import sys; sys.exit(0)"]
+            initialDelaySeconds: 30
+            periodSeconds: 30

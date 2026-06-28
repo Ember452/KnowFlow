@@ -1,0 +1,35 @@
+# KnowFlow 非敏感配置(ConfigMap)
+# 敏感项(LLM API Key / 数据库密码)见 secrets.example.yaml, 部署时创建 Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knowflow-config
+  namespace: knowflow
+  labels:
+    app.kubernetes.io/name: knowflow
+data:
+  KNOWFLOW_ENV: "prod"
+  KNOWFLOW_DEBUG: "false"
+  KNOWFLOW_LOG_LEVEL: "INFO"
+  KNOWFLOW_API_PREFIX: "/api/v1"
+  # PostgreSQL(host 指向集群内服务)
+  KNOWFLOW_POSTGRES_HOST: "knowflow-postgres"
+  KNOWFLOW_POSTGRES_PORT: "5432"
+  KNOWFLOW_POSTGRES_DB: "knowflow"
+  # Redis
+  KNOWFLOW_REDIS_URL: "redis://knowflow-redis:6379/0"
+  # Milvus
+  KNOWFLOW_MILVUS_URI: "http://knowflow-milvus:19530"
+  # MinIO
+  KNOWFLOW_MINIO_ENDPOINT: "knowflow-minio:9000"
+  KNOWFLOW_MINIO_BUCKET: "knowflow"
+  KNOWFLOW_MINIO_SECURE: "false"
+  # LLM 模型(Key 在 Secret)
+  KNOWFLOW_LLM_BASE_URL: "https://api.deepseek.com/v1"
+  KNOWFLOW_LLM_MODEL: "deepseek-chat"
+  # 任务队列
+  KNOWFLOW_TASK_STREAM_INDEX: "knowflow:tasks:index"
+  KNOWFLOW_TASK_STREAM_DLQ: "knowflow:tasks:dlq"
+  KNOWFLOW_TASK_CONSUMER_GROUP: "knowflow-indexer"
+  KNOWFLOW_TASK_MAX_RETRIES: "3"
+  KNOWFLOW_TASK_BLOCK_MS: "5000"
