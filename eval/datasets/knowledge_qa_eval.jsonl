@@ -1,0 +1,60 @@
+{"query": "员工因公报销的完整流程是什么", "answer_keypoints": ["在考勤系统中填写报销申请单", "直属主管在系统中审批", "超过 5000 元需部门总监二次审批", "财务部在 5 个工作日内打款"], "related_chunks": [1, 2, 3, 4], "category": "hr"}
+{"query": "报销申请需要在费用发生后多久内提交", "answer_keypoints": ["30 天内提交", "逾期需额外说明"], "related_chunks": [1, 2], "category": "hr"}
+{"query": "报销类型包括哪些", "answer_keypoints": ["差旅费、交通费、餐饮费、办公用品费"], "related_chunks": [1, 2], "category": "hr"}
+{"query": "入职满几年可以享受多少天年假", "answer_keypoints": ["满 1 年享有 5 天年假", "满 3 年享有 10 天", "满 5 年享有 15 天"], "related_chunks": [2, 3], "category": "hr"}
+{"query": "年假可以跨年累积吗", "answer_keypoints": ["年假不可跨年累积"], "related_chunks": [2, 3], "category": "hr"}
+{"query": "申请年假需要提前多久", "answer_keypoints": ["提前 3 个工作日在考勤系统中提交申请"], "related_chunks": [2, 3], "category": "hr"}
+{"query": "病假期间工资如何发放", "answer_keypoints": ["病假期间工资按基本工资的 80% 发放"], "related_chunks": [3], "category": "hr"}
+{"query": "请病假需要什么条件", "answer_keypoints": ["需提供医院诊断证明", "每年累计不超过 30 天"], "related_chunks": [3], "category": "hr"}
+{"query": "事假的申请规则和扣薪规则是什么", "answer_keypoints": ["需提前 1 个工作日提交申请", "扣除当日工资"], "related_chunks": [3], "category": "hr"}
+{"query": "员工请假分为哪几种类型", "answer_keypoints": ["年假、病假、事假、婚假、产假五种类型"], "related_chunks": [2], "category": "hr"}
+{"query": "迟到多久会被扣薪", "answer_keypoints": ["迟到 15 分钟内不扣薪", "超过 15 分钟按半天事假处理"], "related_chunks": [3, 4], "category": "hr"}
+{"query": "每月迟到几次会被约谈", "answer_keypoints": ["每月迟到 3 次以上需约谈"], "related_chunks": [4], "category": "hr"}
+{"query": "新员工入职需要在人力资源部完成哪些事项", "answer_keypoints": ["签订劳动合同、领取工牌、开通考勤系统账号、开通工单系统账号"], "related_chunks": [4], "category": "hr"}
+{"query": "员工离职需要提前多久提交申请", "answer_keypoints": ["提前 30 天提交申请"], "related_chunks": [4], "category": "hr"}
+{"query": "一线城市差旅住宿标准是多少", "answer_keypoints": ["一线城市 600", "其他城市 450", "需酒店发票"], "related_chunks": [5, 6], "category": "finance"}
+{"query": "差旅餐费标准是多少", "answer_keypoints": ["餐费 100", "不需发票"], "related_chunks": [5, 6], "category": "finance"}
+{"query": "差旅交通费如何报销", "answer_keypoints": ["实报实销", "需票据", "出租车需注明起止地点"], "related_chunks": [5, 6], "category": "finance"}
+{"query": "差旅费超过标准部分如何处理", "answer_keypoints": ["超过标准部分由个人承担", "特殊情况需部门总监审批"], "related_chunks": [6], "category": "finance"}
+{"query": "办公用品采购的审批权限如何划分", "answer_keypoints": ["500 元以下由直属主管审批", "500-2000 元需部门总监审批", "2000 元以上需走采购流程"], "related_chunks": [6], "category": "finance"}
+{"query": "业务招待费的申请要求是什么", "answer_keypoints": ["提前在考勤系统中提交申请", "注明招待对象与事由", "单次不超过 2000 元"], "related_chunks": [6, 7], "category": "finance"}
+{"query": "发票需要满足哪些要求", "answer_keypoints": ["发票抬头需为公司全称", "发票日期需在费用发生后 30 天内", "电子发票与纸质发票具有同等效力", "发票内容需与报销类型一致"], "related_chunks": [7], "category": "finance"}
+{"query": "哪些发票不予受理", "answer_keypoints": ["连号发票、假发票不予受理"], "related_chunks": [7], "category": "finance"}
+{"query": "部门预算超支如何审批", "answer_keypoints": ["超出预算 10% 以内: 需部门总监说明原因", "超出 10%-20%: 需副总审批", "超出 20% 以上: 需总经理审批"], "related_chunks": [8], "category": "finance"}
+{"query": "预算调整什么时候可以申请", "answer_keypoints": ["年中(7月)可申请一次预算调整", "需填写预算调整申请单"], "related_chunks": [8], "category": "finance"}
+{"query": "差旅报销的打款周期是多久", "answer_keypoints": ["日常报销: 审批通过后 5 个工作日", "差旅报销: 审批通过后 7 个工作日", "供应商付款: 一般为 30 天"], "related_chunks": [9], "category": "finance"}
+{"query": "加急打款需要什么条件", "answer_keypoints": ["加急打款需部门总监审批"], "related_chunks": [9], "category": "finance"}
+{"query": "财务审计重点检查哪些内容", "answer_keypoints": ["发票真实性与合规性", "报销金额与标准是否一致", "审批流程是否完整"], "related_chunks": [9, 10], "category": "finance"}
+{"query": "审计发现的问题如何处理", "answer_keypoints": ["轻则退回报销", "重则报告人力资源部处理"], "related_chunks": [10], "category": "finance"}
+{"query": "公司使用什么工单系统", "answer_keypoints": ["公司使用 Jira 作为工单系统"], "related_chunks": [11], "category": "it"}
+{"query": "工单系统账号由谁开通", "answer_keypoints": ["工单系统账号由人力资源部在新员工入职时统一开通"], "related_chunks": [11], "category": "it"}
+{"query": "硬件故障工单的处理时效是多久", "answer_keypoints": ["硬件故障: 4 小时响应"], "related_chunks": [12], "category": "it"}
+{"query": "安全事件工单的处理时效是什么", "answer_keypoints": ["安全事件: 立即响应"], "related_chunks": [12], "category": "it"}
+{"query": "VPN 申请流程是什么", "answer_keypoints": ["在工单系统提交 VPN 申请工单", "IT部审批通过后发放 VPN 客户端与配置文件", "VPN 账号有效期 90 天"], "related_chunks": [12, 13], "category": "it"}
+{"query": "VPN 有哪些使用限制", "answer_keypoints": ["VPN 仅用于远程办公", "禁止分享账号"], "related_chunks": [13], "category": "it"}
+{"query": "新员工入职 IT部需要开通哪些账号", "answer_keypoints": ["邮箱账号", "工单系统账号(Jira)", "考勤系统账号", "文件共享账号"], "related_chunks": [13, 14], "category": "it"}
+{"query": "员工离职时账号如何处理", "answer_keypoints": ["IT部在离厂当日关闭全部账号"], "related_chunks": [14], "category": "it"}
+{"query": "新员工入职发放哪些设备", "answer_keypoints": ["笔记本电脑 1 台、显示器 1 台、键鼠套装 1 套"], "related_chunks": [14], "category": "it"}
+{"query": "设备丢失需要怎么做", "answer_keypoints": ["设备丢失需在 24 小时内提交工单报备"], "related_chunks": [14, 15], "category": "it"}
+{"query": "设备损坏如何处理", "answer_keypoints": ["非人为损坏免费更换", "人为损坏需按价赔偿"], "related_chunks": [15], "category": "it"}
+{"query": "公司有哪些安全规范", "answer_keypoints": ["禁止安装未经 IT部 审批的软件", "禁止使用 USB 存储设备拷贝公司数据", "发现可疑邮件需立即报告 IT部"], "related_chunks": [15], "category": "it"}
+{"query": "运营部每日执行几次系统巡检", "answer_keypoints": ["每日 9:00 与 18:00 执行两次系统巡检"], "related_chunks": [16], "category": "ops"}
+{"query": "巡检内容包括哪些", "answer_keypoints": ["监控平台告警状态", "工单系统待办", "数据库连接池", "磁盘空间"], "related_chunks": [16], "category": "ops"}
+{"query": "磁盘使用率超过多少需要关注", "answer_keypoints": ["磁盘使用率是否超过 80%"], "related_chunks": [16], "category": "ops"}
+{"query": "P0 故障的处理流程是什么", "answer_keypoints": ["发现故障后 5 分钟内通知值班负责人", "值班负责人在监控平台创建故障事件", "10 分钟内组织应急小组", "故障恢复后提交故障报告"], "related_chunks": [17], "category": "ops"}
+{"query": "P0 故障报告需要包含哪些内容", "answer_keypoints": ["故障原因、影响范围、处理过程、改进措施"], "related_chunks": [17], "category": "ops"}
+{"query": "P1 故障多久未解决需要升级", "answer_keypoints": ["2 小时内未解决需升级至 P0"], "related_chunks": [17, 18], "category": "ops"}
+{"query": "运营部的值班制度是什么", "answer_keypoints": ["7x24 值班", "分为白班(9:00-18:00)和夜班(18:00-次日9:00)", "值班表每月排一次"], "related_chunks": [18], "category": "ops"}
+{"query": "夜班发现 P0 故障如何处理", "answer_keypoints": ["夜班发现 P0 故障需电话通知值班负责人"], "related_chunks": [18], "category": "ops"}
+{"query": "数据库的备份策略是什么", "answer_keypoints": ["每日 02:00", "保留 30 天", "存储位置 MinIO"], "related_chunks": [19], "category": "ops"}
+{"query": "日志文件的备份保留多久", "answer_keypoints": ["日志文件: 实时备份", "保留 7 天", "存储位置 Elasticsearch"], "related_chunks": [19], "category": "ops"}
+{"query": "生产环境发布流程是什么", "answer_keypoints": ["运营部在工单系统提交发布申请", "IT部审批发布窗口", "发布在维护窗口(22:00-06:00)执行", "发布后运营部验证核心功能"], "related_chunks": [20], "category": "ops"}
+{"query": "发布记录需要保留多久", "answer_keypoints": ["发布记录存档在运营部共享文档", "保留 1 年"], "related_chunks": [20], "category": "ops"}
+{"query": "KnowFlow 支持哪些文档格式解析", "answer_keypoints": ["PDF、DOCX、Markdown、纯文本四种格式"], "related_chunks": [21], "category": "product"}
+{"query": "KnowFlow 的分块策略是什么", "answer_keypoints": ["递归字符分块", "默认 chunk_size=512", "overlap=64"], "related_chunks": [21], "category": "product"}
+{"query": "KnowFlow 的混合检索如何实现", "answer_keypoints": ["向量召回与 BM25 召回双路融合", "RRF 融合参数 k=60"], "related_chunks": [21], "category": "product"}
+{"query": "KnowFlow 的上下文预算和溢出阈值是多少", "answer_keypoints": ["上下文预算: 默认 32000 tokens", "溢出阈值: 4000 tokens"], "related_chunks": [22, 23], "category": "product"}
+{"query": "KnowFlow 的记忆如何分层存储", "answer_keypoints": ["短期记忆存 Redis", "长期记忆沉淀至 PostgreSQL"], "related_chunks": [23], "category": "product"}
+{"query": "KnowFlow 支持哪两种部署方式", "answer_keypoints": ["Docker Compose 本地部署", "Kubernetes 集群部署"], "related_chunks": [24], "category": "product"}
+{"query": "KnowFlow 的配置如何管理", "answer_keypoints": ["全部配置通过环境变量管理", "前缀 KNOWFLOW_"], "related_chunks": [24], "category": "product"}
+{"query": "KnowFlow 工具调用的最大轮数是多少", "answer_keypoints": ["最大工具调用轮数 5 轮", "防止死循环"], "related_chunks": [22], "category": "product"}
