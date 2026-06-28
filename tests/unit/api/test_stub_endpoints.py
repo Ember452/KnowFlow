@@ -1,17 +1,15 @@
-"""占位端点单测 - trace/eval 返回 501 并标注里程碑.
+"""占位端点单测 - P10(M8) 后全部端点已实现, 无 stub 残留.
 
-chat/skill/memory/agent 端点已分别由 P5(M4)/P6(M5)/P7(M6)/P8(M7) 实现,
-见对应测试文件.
+chat/skill/memory/agent/trace/eval 端点已分别由 P5-P10 实现,
+对应测试见 tests/unit/api/test_*.py. 本文件保留用于标记占位端点清零.
 """
 
 from fastapi.testclient import TestClient
 
 
-def test_trace_stub_501(client: TestClient) -> None:
-    assert client.get("/api/v1/traces/1").status_code == 501
-    assert client.post("/api/v1/traces/replay").status_code == 501
-
-
-def test_eval_stub_501(client: TestClient) -> None:
-    assert client.post("/api/v1/eval/run").status_code == 501
-    assert client.get("/api/v1/eval/runs/1").status_code == 501
+def test_no_stub_endpoints_remain(client: TestClient) -> None:
+    """trace/eval 端点已实现: 不再返回 501, 而是正常的 404/422 等业务码."""
+    # trace: 无记录会话返回 404(而非 501)
+    assert client.get("/api/v1/traces/99999").status_code == 404
+    # eval: 缺请求体返回 422(而非 501)
+    assert client.post("/api/v1/eval/run").status_code == 422
