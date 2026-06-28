@@ -31,3 +31,9 @@
   简单问答直连检索；agent 端点实现父子 run 与委派链查询
 - checkpoint 存储切换 LangGraph 原生表（M7）：删除 P2 遗留 ORM checkpoints 表（迁移 0002），
   lineage 走原生 parent_checkpoint_id，决策见 docs/adr/0004-langgraph-checkpoint.md
+- 可观测体系（M8）：Tracer(contextvars 传播 trace_id + 嵌套 Span)、SpanCollector 异步批量落库、
+  TraceStore 树查询/聚合、Replayer(checkpoint+事件重放)、/traces/* 端点接入实现
+- 离线评测（M8）：observability/eval(dataset/metrics/runner/report)、60 条 QA 评测集、
+  run_eval.py 统一入口、/eval/* 端点、eval/reports/final_report.md 指标汇总
+- 工程化收尾（M8）：Dockerfile multi-stage、CI/CD workflows、deploy/k8s 七清单、
+  README 完整化、docs 四件套、ADR 补齐 7 条、demo.py 一键演示、interview_story.md
