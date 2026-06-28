@@ -1,0 +1,64 @@
+# CD - main 合并后构建镜像并推送 registry
+# 注意: 本流水线以注释形式给出 k8s 部署步骤(需真实集群凭据), 默认不执行部署段.
+name: CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "worker/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Dockerfile"
+
+env:
+  IMAGE_NAME: knowflow-api
+  REGISTRY: ghcr.io
+
+jobs:
+  build-push:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: meta
+        run: echo "tag=$(date +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}:latest
+
+      # ── k8s 部署段(需要真实集群凭据, 默认注释) ──
+      # 1. 在仓库 Secrets 配置 KUBE_CONFIG(集群 kubeconfig base64)
+      # 2. 取消下面注释并填写命名空间与镜像地址:
+      #
+      # - name: Deploy to Kubernetes
+      #   uses: azure/k8s-deploy@v4
+      #   with:
+      #     namespace: knowflow
+      #     manifests: |
+      #       deploy/k8s/namespace.yaml
+      #       deploy/k8s/configmap.yaml
+      #       deploy/k8s/api-deployment.yaml
+      #       deploy/k8s/api-service.yaml
+      #       deploy/k8s/worker-deployment.yaml
+      #     images: |
+      #       ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}

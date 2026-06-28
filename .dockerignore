@@ -20,4 +20,4 @@ scripts
 !README.md
 docker-compose.yml
 deploy
-skills
+# skills 是运行时资产(SkillManager 加载), 必须进镜像

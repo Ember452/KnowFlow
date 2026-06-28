@@ -70,3 +70,6 @@ site/
 tmp/
 
 # ── 评测与报告（指标报告为面试证据, 必须入库, 不忽略）──
+
+# 由 scripts/gen_openapi.py 生成, 不入库
+openapi.json
