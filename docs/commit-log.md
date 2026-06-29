@@ -1411,3 +1411,121 @@ $env:GIT_COMMITTER_DATE = "2026-06-27T10:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+### 92. feat(observability): 实现全链路 Trace 与 Replay
+
+- **提交时间**：2026-06-28 09:00
+- **说明**：P10 可观测核心：Tracer(contextvars 传播 trace_id + 嵌套 Span, 子 span 继承父 session_id)、SpanCollector(内存缓冲 + 批量落库 + 后台自动刷新, 失败降级不阻塞主流程)、TraceStore(批量写入按 started_at 保证父先子后 + 嵌套树查询 + 聚合统计)、Replayer(checkpoint 恢复 + 时间序事件重放, 不执行 LLM)。trace 端点接实现：GET /traces/{session_id} 嵌套树、GET /traces/stats 聚合、POST /traces/replay；schemas/trace.py 补齐树/重放/统计模型。
+- **变更文件**：`src/knowflow/observability/span.py`、`tracer.py`、`collector.py`、`store.py`、`replay.py`、`src/knowflow/api/v1/endpoints/trace.py`、`src/knowflow/schemas/trace.py`、`tests/unit/observability/test_tracer.py`、`test_store.py`、`test_replay.py`、`tests/unit/api/test_trace_endpoint.py`、`tests/unit/api/test_stub_endpoints.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-28T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-28T09:00:00+08:00"
+git add src/knowflow/observability/span.py src/knowflow/observability/tracer.py src/knowflow/observability/collector.py src/knowflow/observability/store.py src/knowflow/observability/replay.py src/knowflow/api/v1/endpoints/trace.py src/knowflow/schemas/trace.py tests/unit/observability/test_tracer.py tests/unit/observability/test_store.py tests/unit/observability/test_replay.py tests/unit/api/test_trace_endpoint.py tests/unit/api/test_stub_endpoints.py
+git commit -m "feat(observability): 实现全链路 Trace 与 Replay"
+```
+
+---
+
+### 93. feat(eval): 新增离线评测体系与统一评测入口
+
+- **提交时间**：2026-06-28 10:00
+- **说明**：P10 评测模块：observability/eval(dataset 加载校验 / metrics 纯函数 Recall@K·MRR·NDCG·要点命中·FC 准确率 / runner 三类评测执行 / report Markdown 渲染 / static 静态组件)。新增 60 条 QA 评测集(要点取自语料原文)；run_eval.py 统一入口(静态可复现 + 真实模式需外部依赖)；eval 端点接实现(POST /run 触发静态评测落库 eval_runs/eval_results + GET /runs/{id} 查询)；final_report.md 汇总五指标实测(检索提升 -1.0% 未达标如实呈现)。
+- **变更文件**：`src/knowflow/observability/eval/dataset.py`、`metrics.py`、`runner.py`、`report.py`、`static.py`、`src/knowflow/api/v1/endpoints/eval.py`、`eval/scripts/run_eval.py`、`eval/datasets/knowledge_qa_eval.jsonl`、`eval/reports/final_report.md`、`eval/reports/retrieval_report_static.md`、`eval/reports/qa_report_static.md`、`eval/reports/tool_fc_report_static.md`、`tests/unit/observability/test_eval_metrics.py`、`test_eval_runner.py`、`test_eval_report.py`、`tests/unit/api/test_eval_endpoint.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-28T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-28T10:00:00+08:00"
+git add src/knowflow/observability/eval/ src/knowflow/api/v1/endpoints/eval.py eval/scripts/run_eval.py eval/datasets/knowledge_qa_eval.jsonl eval/reports/ tests/unit/observability/test_eval_metrics.py tests/unit/observability/test_eval_runner.py tests/unit/observability/test_eval_report.py tests/unit/api/test_eval_endpoint.py
+git commit -m "feat(eval): 新增离线评测体系与统一评测入口"
+```
+
+---
+
+### 94. build: 新增 Dockerfile 与 CI/CD 流水线
+
+- **提交时间**：2026-06-28 11:00
+- **说明**：P11 工程化：Dockerfile multi-stage(builder 装依赖 → runtime 精简 + 非 root + healthcheck, skills 运行时资产进镜像, .dockerignore 修正)；CI 流水线(PR 触发 ruff/mypy/pytest/coverage/pre-commit)；CD 流水线(main 合并构建镜像推 ghcr, k8s 部署段注释说明)；.gitignore 补充 openapi.json 生成物忽略。
+- **变更文件**：`Dockerfile`、`.dockerignore`、`.gitignore`、`.github/workflows/ci.yml`、`.github/workflows/cd.yml`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-28T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-28T11:00:00+08:00"
+git add Dockerfile .dockerignore .gitignore .github/workflows/ci.yml .github/workflows/cd.yml
+git commit -m "build: 新增 Dockerfile 与 CI/CD 流水线"
+```
+
+---
+
+### 95. chore(deploy): 新增 Kubernetes 部署清单
+
+- **提交时间**：2026-06-28 14:00
+- **说明**：P11 部署：deploy/k8s/ 七清单(namespace/configmap/secrets.example/api-deployment/api-service/worker-deployment/hpa), 含资源配额、就绪/存活探针与水平扩缩容(CPU 70% / 内存 80%, 2-6 副本)。
+- **变更文件**：`deploy/k8s/namespace.yaml`、`configmap.yaml`、`secrets.example.yaml`、`api-deployment.yaml`、`api-service.yaml`、`worker-deployment.yaml`、`hpa.yaml`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-28T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-28T14:00:00+08:00"
+git add deploy/k8s/
+git commit -m "chore(deploy): 新增 Kubernetes 部署清单"
+```
+
+---
+
+### 96. docs: 补齐 ADR 与架构/API/部署文档
+
+- **提交时间**：2026-06-28 15:00
+- **说明**：P11 文档：ADR 补齐 5 条(0001 图存储 PG / 0002 一跳扩展 / 0005 uv / 0006 SSE / 0007 MinIO 沙盒, 共 7 条齐)；README 完整化(简介+架构图+3 步快速开始+能力演示+指标表+文档索引)；docs 四件套(architecture/api_reference/skill_development/deployment)；CHANGELOG 补 M8 变更。
+- **变更文件**：`docs/adr/0001-graph-store-postgres.md`、`0002-one-hop-expand.md`、`0005-uv-dependency.md`、`0006-sse-streaming.md`、`0007-minio-sandbox.md`、`docs/architecture.md`、`docs/api_reference.md`、`docs/skill_development.md`、`docs/deployment.md`、`README.md`、`CHANGELOG.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-28T15:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-28T15:00:00+08:00"
+git add docs/adr/0001-graph-store-postgres.md docs/adr/0002-one-hop-expand.md docs/adr/0005-uv-dependency.md docs/adr/0006-sse-streaming.md docs/adr/0007-minio-sandbox.md docs/architecture.md docs/api_reference.md docs/skill_development.md docs/deployment.md README.md CHANGELOG.md
+git commit -m "docs: 补齐 ADR 与架构/API/部署文档"
+```
+
+---
+
+### 97. feat(scripts): 新增一键演示脚本
+
+- **提交时间**：2026-06-29 09:00
+- **说明**：P11 演示：scripts/demo.py 一键演示(上传语料→异步索引→QA→工具调用→多 Agent 委派→可观测, 输出完整日志, 异常可定位), Makefile 接入 demo/demo-qa 目标。
+- **变更文件**：`scripts/demo.py`、`Makefile`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-29T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-29T09:00:00+08:00"
+git add scripts/demo.py Makefile
+git commit -m "feat(scripts): 新增一键演示脚本"
+```
+
+---
+
+### 98. docs: 编写面试叙事文档
+
+- **提交时间**：2026-06-29 10:00
+- **说明**：P11 面试就绪：docs/interview_story.md 基于设计文档四扩写(四模块故事线 + 指标追问应答 + 工程化亮点 + 诚实边界五条 + 简历写法对照)。
+- **变更文件**：`docs/interview_story.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-29T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-29T10:00:00+08:00"
+git add docs/interview_story.md
+git commit -m "docs: 编写面试叙事文档"
+```
+
+---
+
+### 99. docs: 更新提交日志
+
+- **提交时间**：2026-06-29 11:00
+- **说明**：记录 M8（P10+P11）共 7 个业务提交（92-98）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-29T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-29T11:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
