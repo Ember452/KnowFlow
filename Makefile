@@ -64,5 +64,8 @@ clean: ## 清理构建产物与缓存
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 
-demo: ## 一键演示（P11 完善）
-	@echo "demo 脚本将在 P11 阶段实现"
+demo: ## 一键演示（上传→索引→QA→工具→多 Agent，需服务已启动）
+	uv run python scripts/demo.py
+
+demo-qa: ## 只跑 QA 演示
+	uv run python scripts/demo.py --qa-only
