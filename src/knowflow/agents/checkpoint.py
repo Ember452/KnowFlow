@@ -10,7 +10,6 @@ thread_id 约定为 str(agent_run_id), 一个 run 一条线程; 线程内每次 
 单测注入 InMemorySaver(langgraph.checkpoint.memory)即可, 不依赖真实 PG.
 """
 
-import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,11 +25,15 @@ def _make_checkpoint(state: dict[str, Any], version: str) -> dict[str, Any]:
     channel_versions/versions_seen/updated_channels. 状态整体存单一 channel
     "state", 经 new_versions/blob 机制落库(InMemorySaver/PostgresSaver 一致).
     """
+    # 与 LangGraph 运行时一致用 uuid6(时间高位在前): saver 取最新 checkpoint 按
+    # checkpoint_id 字符串排序(InMemory max / Postgres ORDER BY DESC), uuid6 的
+    # 字符串序=时间序; uuid1 时间戳低位在前会周期性回绕导致"最新"错乱.
+    from langgraph.checkpoint.base import uuid6
+
     return {
         "v": 1,
         "ts": datetime.now(UTC).isoformat(),
-        # uuid1 时间有序: InMemorySaver/PostgresSaver 均按 checkpoint_id 排序取最新
-        "id": str(uuid.uuid1()),
+        "id": str(uuid6()),
         "channel_values": {"state": dict(state)},
         "channel_versions": {"state": version},
         "versions_seen": {},

@@ -141,13 +141,19 @@ async def test_run_delegation_full_chain(session_factory: async_sessionmaker[Asy
         delegations = await del_repo.list_by_parent(int(result.run_id))
         assert len(delegations) == 2
         assert all(d.status == "completed" for d in delegations)
-        assert all(d.checkpoint_id == result.checkpoint_id for d in delegations)
+        # 全部委派指向同一 execute 里程碑(execute_node 内落库), 早于结果标记
+        assert len({d.checkpoint_id for d in delegations}) == 1
+        milestone_id = delegations[0].checkpoint_id
+        assert milestone_id != result.checkpoint_id
         assert {d.task for d in delegations} == {"查询产品 A 的价格", "查询产品 B 的价格"}
 
-    # checkpoint lineage 链完整
+    # checkpoint lineage 链完整: 链头为线程最新(编排结果标记), 委派里程碑可按 id 恢复
     chain = await orc._checkpoints.lineage(str(result.run_id))  # type: ignore[union-attr]
-    assert len(chain) >= 3  # start/plan/execute(里程碑) 至少三节点
-    assert chain[0]["metadata"]["node"] == "execute"
+    assert len(chain) >= 3  # 运行时节点边界 checkpoint 成链
+    assert chain[0]["checkpoint_id"] == result.checkpoint_id
+    milestone = await orc._checkpoints.restore(str(result.run_id), milestone_id)
+    assert milestone is not None and "subtask_results" in milestone
+    assert {s["subtask_id"] for s in milestone["subtask_results"]} == {"t1", "t2"}
 
     # 预检索上下文真正进入子 Agent(regression: schema 外键曾被 LangGraph 丢弃)
     sub_calls = [c for c in llm.calls if isinstance(c, list)]
