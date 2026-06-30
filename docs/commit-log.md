@@ -1529,3 +1529,63 @@ $env:GIT_COMMITTER_DATE = "2026-06-29T11:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+### 100. feat(memory): 长期记忆沉淀去重合并
+
+- **提交时间**：2026-06-30 09:00
+- **说明**：优化长期记忆沉淀：save 前按用户查找相似已有记忆（embedding 余弦相似度优先，≥0.9 视为重复；无 embedding 或全部无向量时 SequenceMatcher 文本相似度兜底），命中则覆盖更新内容（取新表述）与重要性（取 max），避免同一偏好反复沉淀造成冗余存储；LongTermStore 新增 update_content 覆盖更新；config 新增 memory_dedup_threshold（默认 0.9）。
+- **变更文件**：`src/knowflow/memory/long_term.py`、`src/knowflow/memory/store.py`、`src/knowflow/core/config.py`、`tests/unit/memory/test_long_term.py`、`tests/unit/memory/test_memory_manager.py`、`tests/unit/api/test_memory_endpoint.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-30T09:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-30T09:00:00+08:00"
+git add src/knowflow/memory/long_term.py src/knowflow/memory/store.py src/knowflow/core/config.py tests/unit/memory/test_long_term.py tests/unit/memory/test_memory_manager.py tests/unit/api/test_memory_endpoint.py
+git commit -m "feat(memory): 长期记忆沉淀去重合并"
+```
+
+---
+
+### 101. feat(retrieval): 接入真实 Embedding/Reranker 双模式
+
+- **提交时间**：2026-06-30 10:00
+- **说明**：检索链路由静态代理模型升级为真实模型双模式：embedding（api=阿里云百炼 qwen3.7-text-embedding 1024 维 / local=sentence-transformers 本地）、reranker（api=百炼 qwen3-rerank 原生 API / local=cross-encoder 本地）；config 新增 embedding_provider/reranker_provider 及独立 Key/URL；.env.example 同步更新模型与密钥占位。
+- **变更文件**：`src/knowflow/retrieval/embedding.py`、`src/knowflow/retrieval/reranker.py`、`src/knowflow/core/config.py`、`.env.example`、`tests/unit/retrieval/test_embedding.py`、`tests/unit/retrieval/test_reranker.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-30T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-30T10:00:00+08:00"
+git add src/knowflow/retrieval/embedding.py src/knowflow/retrieval/reranker.py src/knowflow/core/config.py .env.example tests/unit/retrieval/test_embedding.py tests/unit/retrieval/test_reranker.py
+git commit -m "feat(retrieval): 接入真实 Embedding/Reranker 双模式"
+```
+
+---
+
+### 102. fix(agents): checkpoint 改用 uuid6 保证时间序
+
+- **提交时间**：2026-06-30 11:00
+- **说明**：修复 checkpoint_id 排序隐患：uuid1 时间戳低位在前会周期性回绕，InMemorySaver/PostgresSaver 按 checkpoint_id 字符串排序取最新时可能选错；改用 LangGraph 运行时同款 uuid6（时间高位在前，字符串序=时间序）；test_orchestrator 断言同步收紧（委派里程碑与结果标记分离校验，里程碑可按 id 恢复）。
+- **变更文件**：`src/knowflow/agents/checkpoint.py`、`tests/unit/agents/test_orchestrator.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-30T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-30T11:00:00+08:00"
+git add src/knowflow/agents/checkpoint.py tests/unit/agents/test_orchestrator.py
+git commit -m "fix(agents): checkpoint 改用 uuid6 保证时间序"
+```
+
+---
+
+### 103. docs: 更新提交日志
+
+- **提交时间**：2026-06-30 12:00
+- **说明**：记录本次批次（100-102）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-06-30T12:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-06-30T12:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
