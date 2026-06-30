@@ -73,11 +73,13 @@ async def test_delete_removes_memory(db_session: AsyncSession) -> None:
 async def test_recall_ranks_by_similarity(db_session: AsyncSession) -> None:
     """召回: 语义相似记忆排前, top_k 截断, last_recall 被 touch."""
     sid = await _session_id(db_session)
-    manager = _manager(db_session)
+    # 用 store 直写构造数据, 绕开门面 save 的去重合并(本用例只验证召回排序)
+    store = LongTermStore(db_session, embedding_client=FakeEmbeddingClient())
     for content in ("报销流程是填写单据", "年假政策是 10 天", "报销需要发票"):
-        await manager.save(user_id="u1", session_id=sid, content=content, importance=6.0)
+        await store.save(user_id="u1", session_id=sid, content=content, importance=6.0)
     await db_session.commit()
 
+    manager = LongTermMemoryManager(db_session, store=store, embedding_client=FakeEmbeddingClient())
     hits = await manager.recall("报销怎么做", "u1", top_k=2)
     assert [h.content for h in hits] == ["报销流程是填写单据", "报销需要发票"]
     assert all(h.score > 0 for h in hits)

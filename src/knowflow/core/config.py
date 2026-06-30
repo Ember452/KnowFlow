@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # ── Milvus ──
     milvus_uri: str = "http://localhost:19530"
     milvus_collection: str = "knowflow_chunks"
-    milvus_dim: int = 1024  # bge-m3 向量维度
+    milvus_dim: int = 1024  # 向量维度(qwen3.7-text-embedding 默认 1024)
 
     # ── MinIO ──
     minio_endpoint: str = "localhost:9000"
@@ -49,9 +49,21 @@ class Settings(BaseSettings):
     # ── LLM ──
     llm_api_key: str = ""
     llm_base_url: str = "https://api.deepseek.com/v1"
-    llm_model: str = "deepseek-chat"
-    embedding_model: str = "BAAI/bge-m3"
-    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    llm_model: str = "deepseek-v4-flash"
+
+    # ── Embedding(api=阿里云百炼 / local=sentence-transformers 本地) ──
+    embedding_provider: str = "api"
+    embedding_model: str = "qwen3.7-text-embedding"
+    embedding_api_key: str = ""  # 百炼 API Key(与 LLM Key 独立)
+    embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    # ── Reranker(api=阿里云百炼 / local=cross-encoder 本地) ──
+    reranker_provider: str = "api"
+    reranker_model: str = "qwen3-rerank"
+    reranker_api_key: str = ""  # 百炼 API Key
+    reranker_api_url: str = (
+        "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    )
 
     # ── 检索 ──
     chunk_size: int = 512  # 分块字符数, 默认与 constants.DEFAULT_CHUNK_SIZE 一致
@@ -71,6 +83,7 @@ class Settings(BaseSettings):
     memory_recall_top_k: int = 3  # 记忆召回条数
     memory_sediment_interval: int = 5  # 每 N 轮对话沉淀短期记忆入长期
     memory_sediment_threshold: float = 6.0  # 沉淀的重要性阈值(0-10)
+    memory_dedup_threshold: float = 0.9  # 去重: 与已有记忆相似度达该值视为重复, 覆盖更新
 
     # ── 存储与配额 ──
     session_ttl_seconds: int = 3600

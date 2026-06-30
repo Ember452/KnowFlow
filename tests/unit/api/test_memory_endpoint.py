@@ -34,6 +34,26 @@ def test_sediment_empty_session_saves_nothing(client: TestClient) -> None:
     assert resp.json()["saved"] == 0
 
 
+# 同一偏好在两个会话各沉淀一次, 长期记忆只保留一条(去重合并)
+def test_sediment_dedup_same_preference_across_sessions(client: TestClient) -> None:
+    """同一偏好跨会话重复沉淀: 合并为一条, 不冗余存储."""
+    sid1 = _create_session_with_preference(client)
+    sid2 = _create_session_with_preference(client)
+
+    assert (
+        client.post("/api/v1/memory/u1/sediment", json={"session_id": int(sid1)}).json()["saved"]
+        == 1
+    )
+    assert (
+        client.post("/api/v1/memory/u1/sediment", json={"session_id": int(sid2)}).json()["saved"]
+        == 1
+    )
+
+    memories = client.get("/api/v1/memory/u1").json()
+    assert len(memories) == 1
+    assert memories[0]["content"] == "请记住我喜欢用 Markdown 写文档"
+
+
 def test_delete_memory(client: TestClient) -> None:
     """删除单条记忆; 重复删除返回 404."""
     sid = _create_session_with_preference(client)

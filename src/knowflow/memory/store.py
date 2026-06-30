@@ -8,9 +8,10 @@ PG 无 pgvector 是本地资源受限的取舍(与 Milvus 风险应对一致).
 import asyncio
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowflow.core.logging import get_logger
@@ -94,6 +95,18 @@ class LongTermStore:
             return False
         await self._session.delete(memory)
         return True
+
+    async def update_content(self, memory_id: int, content: str, importance: float) -> bool:
+        """覆盖更新记忆内容与重要性(去重合并用); 不存在返回 False."""
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                update(LongTermMemory)
+                .where(LongTermMemory.id == memory_id)
+                .values(content=content, importance=importance)
+            ),
+        )
+        return (result.rowcount or 0) > 0
 
     async def touch_recall(self, memory_ids: list[int]) -> None:
         """批量更新 last_recall(召回后标记, 参与时间衰减)."""
