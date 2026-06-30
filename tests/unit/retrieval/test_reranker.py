@@ -121,3 +121,74 @@ def test_rerank_negative_scores() -> None:
     assert result[0].chunk_id == 2
     assert result[1].chunk_id == 1
     assert result[2].chunk_id == 3
+
+
+# ── 百炼 API 后端 ──
+
+
+class FakeHttpClient:
+    """fake httpx.Client: 记录请求, 返回预设 rerank 响应."""
+
+    def __init__(self, results: list[dict]) -> None:
+        self.results = results
+        self.post_calls: list[tuple[str, dict, dict]] = []
+
+    def post(self, url: str, *, headers: dict, json: dict) -> "FakeResponse":
+        self.post_calls.append((url, headers, json))
+        return FakeResponse(self.results)
+
+
+class FakeResponse:
+    """fake httpx.Response: 仅暴露 rerank 需要的方法."""
+
+    def __init__(self, results: list[dict]) -> None:
+        self._results = results
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {"output": {"results": self._results}}
+
+
+def test_rerank_api_provider_maps_results() -> None:
+    """api provider: 按响应 index 映射 chunk_id, 分数取自 relevance_score."""
+    fake = FakeHttpClient(
+        results=[{"index": 2, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.4}]
+    )
+    reranker = Reranker(model_name="qwen3-rerank", provider="api", client=fake)
+    chunks = [
+        FakeChunk(id=1, content="a"),
+        FakeChunk(id=2, content="b"),
+        FakeChunk(id=3, content="c"),
+    ]
+    result = reranker.rerank("query", chunks, top_k=10)
+    assert [r.chunk_id for r in result] == [3, 1]
+    assert result[0].score == 0.9
+    assert all(r.source == "rerank" for r in result)
+    # 请求体校验: URL / 鉴权头 / model / input / top_n
+    url, headers, body = fake.post_calls[0]
+    assert url == "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    assert headers["Authorization"].startswith("Bearer ")
+    assert body["model"] == "qwen3-rerank"
+    assert body["input"]["query"] == "query"
+    assert body["input"]["documents"] == ["a", "b", "c"]
+    assert body["parameters"]["top_n"] == 3
+
+
+def test_rerank_api_top_n_capped() -> None:
+    """top_k 大于候选数时 top_n 取候选数(百炼限制)."""
+    fake = FakeHttpClient(results=[{"index": 0, "relevance_score": 0.5}])
+    reranker = Reranker(model_name="qwen3-rerank", provider="api", client=fake)
+    chunks = [FakeChunk(id=1, content="a")]
+    reranker.rerank("query", chunks, top_k=10)
+    assert fake.post_calls[0][2]["parameters"]["top_n"] == 1
+
+
+def test_rerank_api_empty_input_no_call() -> None:
+    """空输入不发起 API 调用."""
+    fake = FakeHttpClient(results=[])
+    reranker = Reranker(model_name="qwen3-rerank", provider="api", client=fake)
+    assert reranker.rerank("query", [], top_k=5) == []
+    assert reranker.rerank("", [FakeChunk(id=1, content="a")], top_k=5) == []
+    assert fake.post_calls == []

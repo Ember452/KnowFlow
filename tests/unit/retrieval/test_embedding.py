@@ -93,3 +93,31 @@ def test_init_with_custom_model_name_and_batch() -> None:
     )
     assert client.model_name == "fake-model"
     assert client.batch_size == 2
+
+
+class FakeApiModel:
+    """fake 百炼 OpenAIEmbeddings: 实现 embed_documents 接口."""
+
+    dim = 8
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """返回与文本长度成比例的固定向量, 便于断言."""
+        return [[float(len(t)) * 0.2 + i * 0.01 for i in range(self.dim)] for t in texts]
+
+
+def test_embed_api_provider_uses_embed_documents() -> None:
+    """api provider 走 embed_documents 接口(百炼 OpenAI 兼容)."""
+    fake = FakeApiModel()
+    client = EmbeddingClient(model=fake, batch_size=4, provider="api")
+    assert client.provider == "api"
+    vecs = client.embed(["hello", "world"])
+    assert len(vecs) == 2
+    assert all(len(v) == FakeApiModel.dim for v in vecs)
+
+
+def test_embed_injected_model_defaults_local() -> None:
+    """注入 model 未传 provider 时按本地 encode 接口调用(向后兼容)."""
+    client = EmbeddingClient(model=FakeModel(), batch_size=4)
+    assert client.provider == "local"
+    vecs = client.embed(["a", "bb"])
+    assert len(vecs) == 2
