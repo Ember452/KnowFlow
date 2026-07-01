@@ -14,6 +14,7 @@ P7 之前历史注入为"最近 window_max_turns 轮全量注入", 后续交给�
 
 import contextlib
 import time
+import uuid
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Any
@@ -432,11 +433,17 @@ class ChatService:
                 )
                 if not orc.no_tools:
                     for tc in orc.tool_calls:
-                        yield make_event("tool_start", {"tool": tc.tool_name, "args": tc.args})
+                        # call_id 关联同一调用的 start/end, 供前端展示并发工具调用时精确匹配
+                        call_id = uuid.uuid4().hex[:16]
+                        yield make_event(
+                            "tool_start",
+                            {"tool": tc.tool_name, "args": tc.args, "call_id": call_id},
+                        )
                         yield make_event(
                             "tool_end",
                             {
                                 "tool": tc.tool_name,
+                                "call_id": call_id,
                                 "success": tc.success,
                                 "latency_ms": tc.latency_ms,
                                 "error": tc.error,
