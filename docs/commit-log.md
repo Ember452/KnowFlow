@@ -1589,3 +1589,33 @@ $env:GIT_COMMITTER_DATE = "2026-06-30T12:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+### 104. feat(web): 新增企业知识库 Agent 平台前端
+
+- **提交时间**：2026-07-01 10:00
+- **说明**：新增 React 18 + TypeScript + Vite + AntD 前端（web/）：12 个页面覆盖对话/知识库/图谱/检索/Agent 编排/工具治理/记忆/可观测/评测/沙箱/系统；SSE 流式对话（fetch ReadableStream 手动解析事件帧）；Claude 设计系统主题（亮/暗双模式）。同时修复关键缺陷：对话停止改用 AbortController 真正中断 SSE 连接（修复停止后重发被旧流污染）、后端 tool_start/tool_end 事件增加 call_id 供前端精确关联并发工具调用、暗色模式硬编码色收敛为 CSS 语义变量、Chat 气泡 Markdown 渲染与滚动跟随优化、图谱边方向箭头与关系类型展示、Trace span 详情抽屉、Dashboard 近 24h 趋势图、路由懒加载、ESLint 门禁、API 端点清单从 openapi.json 自动生成、知识库操作错误处理与索引状态轮询、StatCard 趋势方向语义修正。
+- **变更文件**：`web/`（全部源码与配置）、`src/knowflow/services/chat_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-01T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-01T10:00:00+08:00"
+git add web/ src/knowflow/services/chat_service.py
+git commit -m "feat(web): 新增企业知识库 Agent 平台前端"
+```
+
+---
+
+### 105. docs: 更新提交日志
+
+- **提交时间**：2026-07-02 10:00
+- **说明**：记录本次批次（104）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-02T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-02T10:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
