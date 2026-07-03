@@ -201,3 +201,67 @@ async def test_relation_list_by_source(db_session) -> None:  # type: ignore[no-u
     rels = await rel_repo.list_by_source(e1.id)
     assert len(rels) == 2
     assert {r.relation_type for r in rels} == {"r1", "r2"}
+
+
+@pytest.mark.asyncio
+async def test_entity_list_all_and_list_by_doc(db_session) -> None:  # type: ignore[no-untyped-def]
+    """list_all 返回全部实体(按 id 升序), list_by_doc 按文档过滤."""
+    doc_repo = DocumentRepo(db_session)
+    chunk_repo = ChunkRepo(db_session)
+    entity_repo = EntityRepo(db_session)
+
+    doc1 = await doc_repo.create(title="d1", source_uri="a", file_type="pdf", size_bytes=1)
+    doc2 = await doc_repo.create(title="d2", source_uri="b", file_type="md", size_bytes=1)
+    c1 = await chunk_repo.create(doc_id=doc1.id, content="c1", chunk_index=0, token_count=1)
+    c2 = await chunk_repo.create(doc_id=doc2.id, content="c2", chunk_index=0, token_count=1)
+    await db_session.commit()
+
+    e1 = await entity_repo.create(
+        doc_id=doc1.id, chunk_id=c1.id, name="Alice", entity_type="person"
+    )
+    e2 = await entity_repo.create(doc_id=doc2.id, chunk_id=c2.id, name="Acme", entity_type="org")
+    e3 = await entity_repo.create(doc_id=doc2.id, chunk_id=c2.id, name="Bob", entity_type="person")
+    await db_session.commit()
+
+    all_entities = await entity_repo.list_all()
+    assert [e.id for e in all_entities] == [e1.id, e2.id, e3.id]
+
+    doc2_entities = await entity_repo.list_by_doc(doc2.id)
+    assert {e.name for e in doc2_entities} == {"Acme", "Bob"}
+
+    limited = await entity_repo.list_all(limit=2)
+    assert len(limited) == 2
+
+
+@pytest.mark.asyncio
+async def test_relation_list_all_and_list_by_doc(db_session) -> None:  # type: ignore[no-untyped-def]
+    """list_all 返回全部关系, list_by_doc 按文档过滤."""
+    doc_repo = DocumentRepo(db_session)
+    chunk_repo = ChunkRepo(db_session)
+    entity_repo = EntityRepo(db_session)
+    rel_repo = RelationRepo(db_session)
+
+    doc1 = await doc_repo.create(title="d1", source_uri="a", file_type="pdf", size_bytes=1)
+    doc2 = await doc_repo.create(title="d2", source_uri="b", file_type="md", size_bytes=1)
+    c1 = await chunk_repo.create(doc_id=doc1.id, content="c1", chunk_index=0, token_count=1)
+    c2 = await chunk_repo.create(doc_id=doc2.id, content="c2", chunk_index=0, token_count=1)
+    await db_session.commit()
+
+    a1 = await entity_repo.create(doc_id=doc1.id, chunk_id=c1.id, name="A1", entity_type="concept")
+    a2 = await entity_repo.create(doc_id=doc1.id, chunk_id=c1.id, name="A2", entity_type="concept")
+    b1 = await entity_repo.create(doc_id=doc2.id, chunk_id=c2.id, name="B1", entity_type="concept")
+    b2 = await entity_repo.create(doc_id=doc2.id, chunk_id=c2.id, name="B2", entity_type="concept")
+    await rel_repo.create(
+        doc_id=doc1.id, source_entity_id=a1.id, target_entity_id=a2.id, relation_type="r1"
+    )
+    await rel_repo.create(
+        doc_id=doc2.id, source_entity_id=b1.id, target_entity_id=b2.id, relation_type="r2"
+    )
+    await db_session.commit()
+
+    all_rels = await rel_repo.list_all()
+    assert {r.relation_type for r in all_rels} == {"r1", "r2"}
+
+    doc2_rels = await rel_repo.list_by_doc(doc2.id)
+    assert len(doc2_rels) == 1
+    assert doc2_rels[0].relation_type == "r2"

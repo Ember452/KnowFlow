@@ -33,3 +33,33 @@ class SearchResponse(BaseModel):
     latency_ms: float = 0.0
     cache_hit: bool = False
     total: int = Field(default=0, description="命中条数")
+
+
+class GraphNode(BaseModel):
+    """图谱节点(实体)."""
+
+    id: int
+    name: str
+    entity_type: str
+    normalized: str
+    doc_id: int
+    chunk_id: int
+
+
+class GraphEdge(BaseModel):
+    """图谱边(关系). source/target 为实体 id."""
+
+    id: int
+    source: int = Field(description="源实体 id")
+    target: int = Field(description="目标实体 id")
+    relation_type: str
+    confidence: float = 1.0
+    doc_id: int
+
+
+class GraphResponse(BaseModel):
+    """知识图谱响应: 节点 + 边."""
+
+    nodes: list[GraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)
+    total: int = Field(default=0, description="实体总数")

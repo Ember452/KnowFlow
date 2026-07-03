@@ -75,6 +75,18 @@ class EntityRepo:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def list_all(self, *, limit: int = 200, offset: int = 0) -> Sequence[Entity]:
+        """列出全部实体(按 id 升序), 供图谱可视化."""
+        stmt = select(Entity).order_by(Entity.id.asc()).limit(limit).offset(offset)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def list_by_doc(self, doc_id: int, *, limit: int = 200) -> Sequence[Entity]:
+        """按文档列出实体, 供按文档筛选的图谱."""
+        stmt = select(Entity).where(Entity.doc_id == doc_id).order_by(Entity.id.asc()).limit(limit)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
 
 class EntityAliasRepo:
     """实体别名 CRUD."""
@@ -136,6 +148,23 @@ class RelationRepo:
     async def list_by_source(self, source_entity_id: int) -> Sequence[Relation]:
         """按源实体列出关系(出边)."""
         stmt = select(Relation).where(Relation.source_entity_id == source_entity_id)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def list_all(self, *, limit: int = 400, offset: int = 0) -> Sequence[Relation]:
+        """列出全部关系(按 id 升序), 供图谱可视化."""
+        stmt = select(Relation).order_by(Relation.id.asc()).limit(limit).offset(offset)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def list_by_doc(self, doc_id: int, *, limit: int = 400) -> Sequence[Relation]:
+        """按文档列出关系, 供按文档筛选的图谱."""
+        stmt = (
+            select(Relation)
+            .where(Relation.doc_id == doc_id)
+            .order_by(Relation.id.asc())
+            .limit(limit)
+        )
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
