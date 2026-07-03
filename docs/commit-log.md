@@ -1619,3 +1619,63 @@ $env:GIT_COMMITTER_DATE = "2026-07-02T10:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+### 106. feat(api): 新增会话历史查询接口
+
+- **提交时间**：2026-07-03 10:00
+- **说明**：新增 GET /chat/sessions（按用户列出历史会话，id 倒序）与 GET /chat/sessions/{id}/messages（消息时间升序），支撑前端对话历史侧边栏；新增 SessionOut/MessageOut schema；配套端点单测（用户隔离/消息序列）。
+- **变更文件**：`src/knowflow/api/v1/endpoints/chat.py`、`src/knowflow/schemas/session.py`、`tests/unit/api/test_chat_endpoint.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-03T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-03T10:00:00+08:00"
+git add src/knowflow/api/v1/endpoints/chat.py src/knowflow/schemas/session.py tests/unit/api/test_chat_endpoint.py
+git commit -m "feat(api): 新增会话历史查询接口"
+```
+
+---
+
+### 107. feat(retrieval): 新增知识图谱查询接口
+
+- **提交时间**：2026-07-03 11:00
+- **说明**：新增 GET /knowledge/graph（doc_id 筛选 + 实体上限，悬空边过滤），支撑前端图谱力导向可视化；EntityRepo/RelationRepo 新增 list_all/list_by_doc；新增 GraphNode/GraphEdge/GraphResponse schema；配套端点与 repo 层单测。
+- **变更文件**：`src/knowflow/api/v1/endpoints/knowledge.py`、`src/knowflow/db/repositories/graph_repo.py`、`src/knowflow/schemas/knowledge.py`、`tests/unit/api/test_knowledge_endpoint.py`、`tests/unit/db/test_graph_repo.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-03T11:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-03T11:00:00+08:00"
+git add src/knowflow/api/v1/endpoints/knowledge.py src/knowflow/db/repositories/graph_repo.py src/knowflow/schemas/knowledge.py tests/unit/api/test_knowledge_endpoint.py tests/unit/db/test_graph_repo.py
+git commit -m "feat(retrieval): 新增知识图谱查询接口"
+```
+
+---
+
+### 108. docs: 编写简历写法文档
+
+- **提交时间**：2026-07-03 14:00
+- **说明**：docs/resume_writing.md 提供完整版/精简版/最全版三套简历写法与量化指标溯源声明（红线：仅用实测值，禁止替换为设计目标值）。
+- **变更文件**：`docs/resume_writing.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-03T14:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-03T14:00:00+08:00"
+git add docs/resume_writing.md
+git commit -m "docs: 编写简历写法文档"
+```
+
+---
+
+### 109. docs: 更新提交日志
+
+- **提交时间**：2026-07-03 15:00
+- **说明**：记录本次批次（106-108）的时间线与详细信息。本提交为日志自更新，不写入日志记录（避免自引用）。
+- **变更文件**：`docs/commit-log.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-03T15:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-03T15:00:00+08:00"
+git add docs/commit-log.md
+git commit -m "docs: 更新提交日志"
+```
