@@ -146,3 +146,46 @@ def test_chat_stream_error_event(client: TestClient) -> None:
 
     assert events[-1][0] == "error"
     assert "failed" in json.loads(events[-1][1])["error"]
+
+
+# ── 会话历史端点 ──
+
+
+def test_list_sessions_after_chat(client: TestClient) -> None:
+    """对话落库后, GET /chat/sessions 按用户返回历史会话."""
+    deps.set_retriever(FakeRetriever(chunks=[_CHUNK]))
+    chat_resp = client.post("/api/v1/chat", json={"message": "报销流程是什么?", "user_id": "u1"})
+    assert chat_resp.status_code == 200
+    session_id = int(chat_resp.json()["session_id"])
+
+    resp = client.get("/api/v1/chat/sessions", headers={"X-User-Id": "u1"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["total"] >= 1
+    assert any(s["id"] == session_id for s in data["items"])
+    assert all(s["user_id"] == "u1" for s in data["items"])
+
+
+def test_list_sessions_user_isolation(client: TestClient) -> None:
+    """不同用户互不可见会话."""
+    deps.set_retriever(FakeRetriever(chunks=[_CHUNK]))
+    client.post("/api/v1/chat", json={"message": "hi", "user_id": "u1"})
+
+    resp = client.get("/api/v1/chat/sessions", headers={"X-User-Id": "u2"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["items"] == []
+
+
+def test_list_session_messages_returns_history(client: TestClient) -> None:
+    """GET /chat/sessions/{id}/messages 返回 user+assistant 消息(时间升序)."""
+    deps.set_retriever(FakeRetriever(chunks=[_CHUNK]))
+    chat_resp = client.post("/api/v1/chat", json={"message": "报销流程是什么?", "user_id": "u1"})
+    session_id = int(chat_resp.json()["session_id"])
+
+    resp = client.get(f"/api/v1/chat/sessions/{session_id}/messages")
+    assert resp.status_code == 200
+    items = resp.json()["data"]
+    assert len(items) == 2
+    assert [m["role"] for m in items] == ["user", "assistant"]
+    assert items[0]["content"] == "报销流程是什么?"
+    assert items[1]["content"] == "这是来自 KnowFlow 的回复。"

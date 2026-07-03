@@ -8,7 +8,7 @@ POST /chat 同步返回完整答案与引用(含工具调用记录); POST /chat/
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 
@@ -21,9 +21,13 @@ from knowflow.api.deps import (
     OrchestratorDep,
     RedisDep,
     RetrieverDep,
+    UserDep,
 )
 from knowflow.api.sse import sse_stream
+from knowflow.db.repositories.session_repo import MessageRepo, SessionRepo
 from knowflow.schemas.chat import ChatRequest, ChatResponse
+from knowflow.schemas.common import ApiResponse, PageResponse
+from knowflow.schemas.session import MessageOut, SessionOut
 from knowflow.services.chat_service import ChatService
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -96,3 +100,51 @@ async def chat_stream(
         multi_agent=multi_agent,
     )
     return EventSourceResponse(sse_stream(request, service.stream_events(req)))
+
+
+@router.get("/sessions", response_model=ApiResponse[PageResponse[SessionOut]])
+async def list_sessions(
+    user_id: UserDep,
+    db: DbDep,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> ApiResponse[PageResponse[SessionOut]]:
+    """列出当前用户的会话(按 id 倒序), 供前端历史侧边栏."""
+    repo = SessionRepo(db)
+    sessions = await repo.list_by_user(user_id, limit=limit, offset=offset)
+    items = [
+        SessionOut(
+            id=s.id,
+            user_id=s.user_id,
+            title=s.title,
+            status=s.status,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in sessions
+    ]
+    return ApiResponse(data=PageResponse(items=items, total=len(items), limit=limit, offset=offset))
+
+
+@router.get("/sessions/{session_id}/messages", response_model=ApiResponse[list[MessageOut]])
+async def list_messages(
+    session_id: int,
+    db: DbDep,
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> ApiResponse[list[MessageOut]]:
+    """列出会话的消息(按 id 升序/时间序), 供前端载入历史对话."""
+    repo = MessageRepo(db)
+    messages = await repo.list_by_session(session_id, limit=limit)
+    items = [
+        MessageOut(
+            id=m.id,
+            session_id=m.session_id,
+            role=m.role,
+            content=m.content,
+            tokens=m.tokens,
+            citations=m.citations,
+            created_at=m.created_at,
+        )
+        for m in messages
+    ]
+    return ApiResponse(data=items)
