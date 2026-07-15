@@ -32,3 +32,25 @@ class SkillToggleResponse(BaseModel):
 
     name: str
     enabled: bool
+
+
+class ToolMetricInfo(BaseModel):
+    """单个工具的运行时调用指标."""
+
+    tool: str
+    calls: int = 0
+    success_rate: float = 0.0
+    avg_latency_ms: float = 0.0
+    token_count: int = 0
+    domain: str = "unknown"
+
+
+class ToolGovernanceStats(BaseModel):
+    """工具治理统计响应(前端治理面板)."""
+
+    total_tools: int = 0
+    visible_tools: int = 0
+    schema_tokens: int = 0
+    accuracy: float = 0.0
+    domain_breakdown: dict[str, int] = Field(default_factory=dict)
+    metrics: list[ToolMetricInfo] = Field(default_factory=list)

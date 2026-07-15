@@ -11,6 +11,7 @@ from knowflow.api.v1.endpoints import (
     knowledge,
     memory,
     skill,
+    tools,
     trace,
 )
 
@@ -21,6 +22,7 @@ router.include_router(knowledge.router)
 router.include_router(chat.router)
 router.include_router(agent.router)
 router.include_router(skill.router)
+router.include_router(tools.router)
 router.include_router(memory.router)
 router.include_router(trace.router)
 router.include_router(eval.router)
