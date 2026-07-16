@@ -11,21 +11,26 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from knowflow.db.repositories.document_repo import ChunkRepo
+from knowflow.core.logging import get_logger
+from knowflow.db.repositories.document_repo import ChunkRepo, DocumentRepo
 from knowflow.retrieval.cache import RetrievalCache
 from knowflow.retrieval.expander import Expander
 from knowflow.retrieval.hybrid_search import ChunkScore, HybridSearch
 from knowflow.retrieval.reranker import Reranker
 
+logger = get_logger(__name__)
+
 
 @dataclass(frozen=True)
 class ChunkWithScore:
-    """检索返回的单条 chunk(含内容与分数)."""
+    """检索返回的单条 chunk(含内容、分数与文档出处)."""
 
     chunk_id: int
     content: str
     score: float
     source: str
+    doc_id: int | None = None
+    doc_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,8 +87,9 @@ class GraphRAGRetriever:
             with_rerank: 是否启用 reranker 精排.
 
         Returns:
-            RetrievalResult, 含 chunks/query/latency_ms/cache_hit.
+            RetrievalResult, 含 chunks(带文档出处 doc_id/doc_title)/query/latency_ms/cache_hit.
         """
+        # 首先记录开始时间
         start = time.perf_counter()
 
         if top_k is None:
@@ -92,6 +98,8 @@ class GraphRAGRetriever:
             top_k = get_settings().retrieval_top_k
 
         # 1. 缓存查询
+        # 如果缓存中命中,直接返回缓存中的chunk和查询时间
+        # 具体细节是对用户的query进行hashlib.md5(query.encode().hexdigest())哈希摘要
         cached = await self._cache.get(query)
         if cached is not None:
             # 缓存命中: 直接返回(需要从 DB 取 chunk 内容)
@@ -104,11 +112,21 @@ class GraphRAGRetriever:
                 cache_hit=True,
             )
 
+        # 在PostgreSQL中存储分块正文和对应的id等
+        # 在Milvus中存储向量, id docxid
+        # 在Redis中存储的是chunkID, Score, Source
+
         # 2. Hybrid 召回(取 top_k*2 候选, 给 expand/rerank 留余量)
+        # 进行向量检索和BM25双路召回2topK,得到RRF融合后的结果topK
+        # RRF 的逻辑是1/(k+rank), 其中k是RRF参数, rank是召回结果的排名,因为不同召回系统的量不同
+        # 平滑参数的作用,放大差距
+        # 注意,这里召回的是chunkID和Score
         candidate_k = top_k * 2
         hits = self._hybrid_search.search(query, candidate_k)
 
         # 3. 一跳扩展
+        # 首先收集所有命中chunk的entry_ids,取出相关联的chunkIds,
+        # 将已经在原hits中的chunk去重。进行结果拼接,hits+chunk(score=0, source="expand")
         if with_expand and hits:
             # expander 需要 AsyncSession, 从 factory 取, 并按该 session 构造 expander
             session: AsyncSession = await self._get_session()
@@ -133,6 +151,7 @@ class GraphRAGRetriever:
         hits = hits[:top_k]
 
         # 5. 取 chunk 内容
+        # 在这里根据文档的docids,获取引用出处
         chunks = await self._fetch_chunks(hits)
 
         # 6. 写缓存
@@ -163,7 +182,7 @@ class GraphRAGRetriever:
         return list(await repo.get_many(chunk_ids))
 
     async def _fetch_chunks(self, hits: Sequence[ChunkScore]) -> list[ChunkWithScore]:
-        """从 DB 取 chunk 内容并组装 ChunkWithScore."""
+        """从 DB 取 chunk 内容并组装 ChunkWithScore(含文档出处)."""
         if not hits:
             return []
         session = await self._get_session()
@@ -171,6 +190,14 @@ class GraphRAGRetriever:
             chunks_orm = await self._fetch_chunks_orm([h.chunk_id for h in hits], session)
             # 按 hits 顺序匹配 ORM
             orm_by_id = {c.id: c for c in chunks_orm}
+            # 批量取文档标题作为引用出处(增强信息, 失败不阻塞检索)
+            titles: dict[int, str] = {}
+            try:
+                doc_ids = list({orm.doc_id for orm in chunks_orm if orm.doc_id is not None})
+                if doc_ids:
+                    titles = await DocumentRepo(session).get_many_titles(doc_ids)
+            except Exception as exc:
+                logger.warning("retriever.fetch_doc_titles_failed", error=str(exc))
             result: list[ChunkWithScore] = []
             for h in hits:
                 orm = orm_by_id.get(h.chunk_id)
@@ -181,6 +208,8 @@ class GraphRAGRetriever:
                             content=orm.content,
                             score=h.score,
                             source=h.source,
+                            doc_id=orm.doc_id,
+                            doc_title=titles.get(orm.doc_id),
                         )
                     )
             return result

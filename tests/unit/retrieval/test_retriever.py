@@ -1,6 +1,8 @@
 """retriever 单测 - mock 各子组件, 验证缓存命中跳过 / 调用顺序 / 开关."""
 
 from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -18,16 +20,23 @@ class FakeChunk:
 
     id: int
     content: str
+    doc_id: int = 0
 
 
 class FakeSession:
-    """fake AsyncSession, 模拟 close."""
+    """fake AsyncSession, 模拟 close 与 execute(标题查询返回预设 titles)."""
 
-    def __init__(self) -> None:
+    def __init__(self, titles: dict[int, str] | None = None) -> None:
         self.closed = False
+        self.titles = titles or {}
+        self.executes: list[Any] = []
 
     async def close(self) -> None:
         self.closed = True
+
+    async def execute(self, stmt: Any) -> Any:
+        self.executes.append(stmt)
+        return SimpleNamespace(all=lambda: list(self.titles.items()))
 
 
 class FakeChunkRepo:
@@ -99,6 +108,7 @@ def _make_retriever(
     reranked: list[ChunkScore] | None = None,
     cached: list[ChunkScore] | None = None,
     chunks_orm: list[FakeChunk] | None = None,
+    titles: dict[int, str] | None = None,
 ) -> tuple[GraphRAGRetriever, FakeHybridSearch, FakeExpander, FakeReranker, FakeCache]:
     """构造完整 mock 链路的 retriever."""
     hybrid = FakeHybridSearch(hybrid_hits or [])
@@ -107,7 +117,7 @@ def _make_retriever(
     cache = FakeCache(cached)
 
     chunks = chunks_orm or [FakeChunk(id=1, content="c1"), FakeChunk(id=2, content="c2")]
-    session = FakeSession()
+    session = FakeSession(titles)
 
     # 用 lambda 返回 session, 模拟 session_factory
     def session_factory() -> FakeSession:
@@ -230,6 +240,25 @@ async def test_retrieve_returns_chunk_with_content() -> None:
     assert isinstance(result.chunks[0], ChunkWithScore)
     assert result.chunks[0].content == "hello world"
     assert result.chunks[0].chunk_id == 1
+
+
+@pytest.mark.asyncio
+async def test_retrieve_returns_doc_origin() -> None:
+    """返回的 ChunkWithScore 含文档出处 doc_id/doc_title."""
+    hybrid_hits = [ChunkScore(chunk_id=1, score=0.5, source="hybrid")]
+    chunks_orm = [FakeChunk(id=1, content="hello world", doc_id=42)]
+    retriever, *_ = _make_retriever(
+        hybrid_hits=hybrid_hits,
+        expanded=hybrid_hits,
+        reranked=hybrid_hits,
+        chunks_orm=chunks_orm,
+        titles={42: "报销手册"},
+    )
+
+    result = await retriever.retrieve("query", top_k=5, with_rerank=False)
+
+    assert result.chunks[0].doc_id == 42
+    assert result.chunks[0].doc_title == "报销手册"
 
 
 @pytest.mark.asyncio

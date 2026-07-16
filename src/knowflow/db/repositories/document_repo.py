@@ -95,6 +95,17 @@ class DocumentRepo:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_many_titles(self, doc_ids: Sequence[int]) -> dict[int, str]:
+        """批量取文档标题(doc_id -> title), 供检索结果展示引用出处."""
+        if not doc_ids:
+            return {}
+        stmt = select(Document.id, Document.title).where(Document.id.in_(doc_ids))
+        result = await self.session.execute(stmt)
+        titles: dict[int, str] = {}
+        for doc_id, title in result.all():
+            titles[doc_id] = title
+        return titles
+
 
 class ChunkRepo:
     """分块 CRUD."""

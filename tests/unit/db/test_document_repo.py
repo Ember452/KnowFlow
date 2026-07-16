@@ -83,6 +83,19 @@ async def test_document_find_by_content_hash(db_session) -> None:  # type: ignor
 
 
 @pytest.mark.asyncio
+async def test_document_get_many_titles(db_session) -> None:  # type: ignore[no-untyped-def]
+    """get_many_titles 批量返回 doc_id -> title, 空列表返回空 dict."""
+    repo = DocumentRepo(db_session)
+    d1 = await repo.create(title="报销手册", source_uri="a", file_type="pdf", size_bytes=1)
+    d2 = await repo.create(title="考勤制度", source_uri="b", file_type="pdf", size_bytes=1)
+    await db_session.commit()
+
+    titles = await repo.get_many_titles([d1.id, d2.id])
+    assert titles == {d1.id: "报销手册", d2.id: "考勤制度"}
+    assert await repo.get_many_titles([]) == {}
+
+
+@pytest.mark.asyncio
 async def test_chunk_create_and_list_by_doc(db_session) -> None:  # type: ignore[no-untyped-def]
     """分块按 chunk_index 升序返回."""
     doc_repo = DocumentRepo(db_session)

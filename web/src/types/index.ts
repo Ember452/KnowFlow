@@ -123,6 +123,7 @@ export interface RetrievalChunk {
   chunk_id: number;
   doc_id?: number;
   filename?: string;
+  doc_title?: string;
   content: string;
   score: number;
   source: RetrievalSource;
@@ -166,6 +167,8 @@ export interface Citation {
   score: number;
   source: RetrievalSource;
   filename?: string;
+  doc_id?: number;
+  doc_title?: string;
 }
 
 export interface ToolCall {

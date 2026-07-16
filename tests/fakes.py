@@ -204,6 +204,8 @@ class FakeChunkWithScore:
     content: str
     score: float
     source: str
+    doc_id: int | None = None
+    doc_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -316,6 +318,8 @@ class FakeToolOrchestrator:
         history: list[dict[str, str]] | None = None,
         context: str | None = None,
         active_skills: list[Any] | None = None,
+        on_token: Any = None,
+        on_tool: Any = None,
     ) -> Any:
         from knowflow.services.tool_orchestrator import OrchestratorResult
 
@@ -353,6 +357,8 @@ class FakeMultiAgentOrchestrator:
         session_id: int | None = None,
         context: str = "",
         history: list[dict[str, str]] | None = None,
+        on_token: Any = None,
+        on_progress: Any = None,
     ) -> Any:
         from knowflow.agents.orchestrator import MultiAgentResult
 

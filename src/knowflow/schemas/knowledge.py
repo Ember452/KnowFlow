@@ -17,12 +17,14 @@ class SearchRequest(BaseModel):
 
 
 class ChunkResult(BaseModel):
-    """单条检索结果."""
+    """单条检索结果(含文档出处)."""
 
     chunk_id: int
     content: str
     score: float
     source: str = Field(description="来源: hybrid/expand/rerank")
+    doc_id: int | None = Field(default=None, description="所属文档 id")
+    doc_title: str | None = Field(default=None, description="所属文档标题")
 
 
 class SearchResponse(BaseModel):

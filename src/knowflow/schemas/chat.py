@@ -9,12 +9,14 @@ from pydantic import BaseModel, Field
 
 
 class Citation(BaseModel):
-    """检索引用."""
+    """检索引用(含文档出处)."""
 
     chunk_id: int
     content: str | None = None
     score: float | None = None
     source: str | None = None
+    doc_id: int | None = None
+    doc_title: str | None = None
 
 
 class ChatRequest(BaseModel):

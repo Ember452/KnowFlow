@@ -33,7 +33,14 @@ async def search(
         with_rerank=req.with_rerank,
     )
     chunks = [
-        ChunkResult(chunk_id=c.chunk_id, content=c.content, score=c.score, source=c.source)
+        ChunkResult(
+            chunk_id=c.chunk_id,
+            content=c.content,
+            score=c.score,
+            source=c.source,
+            doc_id=c.doc_id,
+            doc_title=c.doc_title,
+        )
         for c in result.chunks
     ]
     return ApiResponse(

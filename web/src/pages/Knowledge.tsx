@@ -5,6 +5,7 @@ import PageHeader from '@/components/PageHeader';
 import { DocStatusTag } from '@/components/StatusTag';
 import EmptyState from '@/components/EmptyState';
 import { useAsync } from '@/hooks/useAsync';
+import { useAppStore } from '@/stores/appStore';
 import { documentsApi } from '@/api/documents';
 import { knowledgeApi } from '@/api/knowledge';
 import { formatBytes, formatTime } from '@/lib/format';
@@ -26,7 +27,8 @@ const ACTIVE_STATUS: KnowDocument['status'][] = ['indexing', 'reindexing'];
 
 export default function Knowledge() {
   const [msgApi, ctx] = message.useMessage();
-  const docs = useAsync(() => documentsApi.list(), []);
+  const userId = useAppStore((s) => s.userId);
+  const docs = useAsync(() => documentsApi.list(userId), [userId]);
   const [query, setQuery] = useState('年假制度');
   const [topK, setTopK] = useState(5);
   const [searching, setSearching] = useState(false);
@@ -34,7 +36,7 @@ export default function Knowledge() {
 
   const handleUpload = async (file: File) => {
     try {
-      const r = await documentsApi.upload(file);
+      const r = await documentsApi.upload(file, userId);
       msgApi.success(`${r.message}（doc_id=${r.doc_id}）`);
       docs.reload();
     } catch (e) {
