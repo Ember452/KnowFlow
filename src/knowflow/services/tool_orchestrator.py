@@ -9,6 +9,7 @@ LLM 协议(duck typing): bind_tools(list[dict]) -> bound; bound.ainvoke(messages
 """
 
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -82,6 +83,11 @@ class ToolOrchestrator:
         self._resolver = DependencyResolver()
         self._metrics = metrics or ToolMetrics()
 
+    @property
+    def metrics(self) -> ToolMetrics:
+        """工具调用指标收集器(供治理统计端点读取)."""
+        return self._metrics
+
     async def run(
         self,
         query: str,
@@ -90,6 +96,8 @@ class ToolOrchestrator:
         history: list[dict[str, str]] | None = None,
         context: str | None = None,
         active_skills: list[SkillDefinition] | None = None,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+        on_tool: Callable[[ToolCallRecord], Awaitable[None]] | None = None,
     ) -> OrchestratorResult:
         """执行工具版对话: 激活 Skill → 注入可见工具 → 工具调用循环 → 最终答案.
 
@@ -100,6 +108,9 @@ class ToolOrchestrator:
             history: 历史消息(role/content).
             context: 检索上下文文本, 注入 system prompt(上层预检索时传入).
             active_skills: 调用方指定的激活 Skill 集; None 时使用管理器全部启用项.
+            on_token: 可选流式回调, 最终答案逐段回传(LLM 支持 astream 时);
+                None 时一次性返回完整答案.
+            on_tool: 可选回调, 每次工具调用完成后通知调用方(事件流展示用).
         """
         if active_skills is None:
             active = filter_skills_by_role(self._skills.active_skills(), agent_role)
@@ -124,10 +135,29 @@ class ToolOrchestrator:
         tool_calls_log: list[ToolCallRecord] = []
         max_rounds = self._settings.max_tool_rounds
         for round_idx in range(max_rounds):
-            response = await bound.ainvoke(messages)
+            if on_token is not None and hasattr(bound, "astream"):
+                # 流式收集本轮响应, 聚合后判断是否工具调用
+                chunks: list[Any] = []
+                async for chunk in bound.astream(messages):
+                    chunks.append(chunk)
+                response: Any = chunks[0] if chunks else None
+                for c in chunks[1:]:
+                    response = response + c
+            else:
+                response = await bound.ainvoke(messages)
             calls = getattr(response, "tool_calls", None) or []
             if not calls:
-                answer = getattr(response, "content", "") or str(response)
+                # 无工具调用: 本轮即最终答案; 流式路径把收集到的文本逐段回传
+                if on_token is not None and hasattr(bound, "astream"):
+                    for c in chunks:
+                        text = self._extract_text(c)
+                        if text:
+                            await on_token(text)
+                    answer = self._extract_text(response)
+                else:
+                    answer = getattr(response, "content", "") or str(response)
+                    if on_token is not None:
+                        await on_token(answer)
                 return OrchestratorResult(
                     answer=answer,
                     tool_calls=tool_calls_log,
@@ -138,6 +168,8 @@ class ToolOrchestrator:
             for tc in calls:
                 record = await self._invoke_tool(tc, agent_role, active, session_id)
                 tool_calls_log.append(record)
+                if on_tool is not None:
+                    await on_tool(record)
                 # 工具结果以 tool 消息回填
                 messages.append(
                     {
@@ -155,6 +187,14 @@ class ToolOrchestrator:
             rounds=max_rounds,
             truncated=True,
         )
+
+    @staticmethod
+    def _extract_text(obj: Any) -> str:
+        """从 langchain chunk/消息/str 提取文本增量(流式收集用)."""
+        if isinstance(obj, str):
+            return obj
+        content = getattr(obj, "content", None)
+        return str(content) if content is not None else ""
 
     async def _invoke_tool(
         self,

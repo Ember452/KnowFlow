@@ -9,6 +9,7 @@ LangGraph 状态机(understand → plan → [execute 并发委派] → summarize
 """
 
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -78,6 +79,8 @@ class MultiAgentOrchestrator:
         self._main_agent = MainAgent(llm, self._settings)
         self._subagent = Subagent(llm, self._settings, context_manager=context_manager)
         self._graph: Any = None
+        self._on_token: Callable[[str], Awaitable[None]] | None = None  # 流式回调(经实例透传)
+        self._on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None
 
     # ── 对外入口 ──
 
@@ -87,6 +90,8 @@ class MultiAgentOrchestrator:
         session_id: int | None,
         context: str = "",
         history: list[dict[str, str]] | None = None,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+        on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> MultiAgentResult:
         """编排入口.
 
@@ -95,12 +100,19 @@ class MultiAgentOrchestrator:
             session_id: 会话 id(agent_runs 落库; 直连信号时可不传).
             context: 预检索上下文文本(chat_service 检索后注入).
             history: 最近对话历史(主 Agent 直答链路注入, 保持多轮上下文).
+            on_token: 可选流式回调, 汇总/直答阶段逐段回传(LLM 支持 astream 时);
+                None 时一次性返回.
+            on_progress: 可选回调, 汇总开始前通知编排进度(delegated/subtasks/run_id),
+                供调用方先发 progress 事件再收 token 流.
 
         Returns:
             MultiAgentResult. intent=simple 时 answer 为空(调用方走直连检索链路);
             委派完成后 answer 为主 Agent 汇总结果.
         """
         start = time.perf_counter()
+        # 经实例属性透传给 graph 节点(summarize_node 签名固定, 无法传参)
+        self._on_token = on_token
+        self._on_progress = on_progress
         intent = self._main_agent.understand(query)
         if intent == "simple":
             return MultiAgentResult(
@@ -249,10 +261,23 @@ class MultiAgentOrchestrator:
         """summarize 节点: 委派后汇总子结果, 未委派直答."""
         query = state.get("query", "")
         context = state.get("retrieval_context", "")
+        # 汇总开始前先回调进度(供调用方先发 progress 事件再收 token 流)
+        if self._on_progress is not None:
+            await self._on_progress(
+                {
+                    "delegated": bool(state.get("needs_delegation")),
+                    "subtasks": [s.get("id", "?") for s in state.get("plan", [])],
+                    "run_id": state.get("run_id"),
+                }
+            )
         if state.get("needs_delegation"):
-            answer = await self._main_agent.summarize(query, state.get("subtask_results", []))
+            answer = await self._main_agent.summarize(
+                query, state.get("subtask_results", []), on_token=self._on_token
+            )
         else:
-            answer = await self._main_agent.direct_answer(query, context, state.get("history"))
+            answer = await self._main_agent.direct_answer(
+                query, context, state.get("history"), on_token=self._on_token
+            )
         return {"final_answer": answer}
 
     # ── 内部 ──

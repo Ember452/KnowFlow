@@ -10,6 +10,7 @@ decide/act/observe 三步实现:
 """
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -148,34 +149,64 @@ class MainAgent(BaseAgent):
         logger.warning("main_agent.plan_degraded", reason=last_error)
         return PlanResult(needs_delegation=False, reason=f"规划解析失败: {last_error}")
 
-    async def summarize(self, query: str, results: list[dict[str, Any]]) -> str:
+    async def summarize(
+        self,
+        query: str,
+        results: list[dict[str, Any]],
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+    ) -> str:
         """LLM 汇总子任务结果."""
         prompt = SUMMARIZER_PROMPT_TEMPLATE.format(
             query=query, subtask_results=_format_results(results)
         )
-        response = await self._get_llm().ainvoke(prompt)
-        return _extract_text(response).strip()
+        return await self._answer(prompt, on_token)
 
     async def direct_answer(
         self,
         query: str,
         context: str = "",
         history: list[dict[str, str]] | None = None,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
         """无委派时直接回答(注入检索上下文与最近对话历史)."""
-        system = (
-            "你是 KnowFlow 企业知识库助手, 基于检索上下文回答问题, 不要编造事实.\n\n"
-            f"检索上下文:\n{context}"
-            if context
-            else "你是 KnowFlow 企业知识库助手, 请直接回答问题."
-        )
+        if context and context != "(知识库未检索到相关内容)":
+            system = (
+                "你是 KnowFlow 企业知识库助手, 基于检索上下文回答问题, 不要编造事实.\n\n"
+                f"检索上下文:\n{context}"
+            )
+        else:
+            # 检索上下文为空/未命中: 允许用自身知识回答, 避免拒答
+            system = (
+                "你是 KnowFlow 企业知识库助手. 知识库未检索到相关内容时, "
+                '可用自身知识回答, 但开头注明"未检索到知识库内容, 以下为模型知识回答".'
+            )
         messages = [
             {"role": "system", "content": system},
             *(history or []),
             {"role": "user", "content": query},
         ]
-        response = await self._get_llm().ainvoke(messages)
-        return _extract_text(response).strip()
+        return await self._answer(messages, on_token)
+
+    async def _answer(
+        self,
+        prompt: str | list[dict[str, str]],
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+    ) -> str:
+        """LLM 生成答案; 传入 on_token 时逐段流式回传(LLM 支持 astream), 否则一次性."""
+        llm = self._get_llm()
+        if on_token is not None and hasattr(llm, "astream"):
+            parts: list[str] = []
+            async for chunk in llm.astream(prompt):
+                text = _extract_text(chunk)
+                if text:
+                    parts.append(text)
+                    await on_token(text)
+            return "".join(parts).strip()
+        response = await llm.ainvoke(prompt)
+        text = _extract_text(response).strip()
+        if on_token is not None and text:
+            await on_token(text)
+        return text
 
 
 # ── 解析工具 ──
