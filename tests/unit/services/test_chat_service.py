@@ -77,6 +77,64 @@ async def test_chat_reuses_session_with_history(db_session: AsyncSession) -> Non
     assert llm.last_messages[-1] == {"role": "user", "content": "第二问"}
 
 
+class FakeQueryRewriter:
+    """fake query 改写器: 记录调用, 返回预设结果."""
+
+    def __init__(self, result: str) -> None:
+        self.result = result
+        self.calls: list[tuple[str, list[dict[str, str]]]] = []
+
+    async def rewrite(self, query: str, history: list[dict[str, str]]) -> str:
+        self.calls.append((query, history))
+        return self.result
+
+
+class _BoomQueryRewriter:
+    """改写抛异常的 fake, 验证回退原 query."""
+
+    async def rewrite(self, query: str, history: list[dict[str, str]]) -> str:
+        raise RuntimeError("rewrite failed")
+
+
+async def test_chat_uses_rewritten_query_for_retrieval(db_session: AsyncSession) -> None:
+    """多轮对话: 检索使用改写后的 query, 用户消息保持原文, 改写仅在有多轮历史时触发."""
+    rewriter = FakeQueryRewriter(result="报销流程的具体步骤(改写)")
+    retriever = FakeRetriever(chunks=[_CHUNK])
+    service = ChatService(
+        session=db_session,
+        retriever=retriever,
+        llm=FakeChatLLM(),
+        query_rewriter=rewriter,
+    )
+
+    first = await service.chat(ChatRequest(message="第一问", user_id="u1"))
+    await service.chat(ChatRequest(message="它支持哪些步骤", session_id=first.session_id))
+
+    # 仅第二轮有历史才改写
+    assert len(rewriter.calls) == 1
+    assert rewriter.calls[0][0] == "它支持哪些步骤"
+    assert retriever.calls[-1]["query"] == "报销流程的具体步骤(改写)"
+    # 第一轮检索仍用原始 query
+    assert retriever.calls[0]["query"] == "第一问"
+
+
+async def test_chat_rewrite_failure_falls_back(db_session: AsyncSession) -> None:
+    """改写失败时回退原 query, 对话不中断."""
+    retriever = FakeRetriever(chunks=[_CHUNK])
+    service = ChatService(
+        session=db_session,
+        retriever=retriever,
+        llm=FakeChatLLM(),
+        query_rewriter=_BoomQueryRewriter(),
+    )
+
+    first = await service.chat(ChatRequest(message="第一问", user_id="u1"))
+    resp = await service.chat(ChatRequest(message="第二问", session_id=first.session_id))
+
+    assert resp.answer == "这是来自 KnowFlow 的回复。"
+    assert retriever.calls[-1]["query"] == "第二问"
+
+
 async def test_chat_session_not_found(db_session: AsyncSession) -> None:
     """指定不存在的 session_id 抛 NotFoundError."""
     with pytest.raises(NotFoundError):
@@ -220,6 +278,51 @@ async def test_stream_with_orchestrator_no_tools_falls_back(db_session: AsyncSes
     assert "tool_start" not in types
 
 
+class _StreamingToolOrchestrator(FakeToolOrchestrator):
+    """fake 工具编排器: 调用 on_tool/on_token 回调, 模拟真实流式行为."""
+
+    answer = "计算结果: 1024"
+
+    async def run(
+        self,
+        query,
+        session_id=None,
+        agent_role=None,
+        history=None,
+        context=None,
+        active_skills=None,
+        on_token=None,
+        on_tool=None,
+    ):
+        from knowflow.services.tool_orchestrator import OrchestratorResult
+
+        if on_tool is not None:
+            await on_tool(self.tool_calls[0])
+        if on_token is not None:
+            for part in ("计算结果", ": ", "1024"):
+                await on_token(part)
+        return OrchestratorResult(
+            answer=self.answer, tool_calls=list(self.tool_calls), no_tools=self.no_tools
+        )
+
+
+async def test_stream_orchestrator_callbacks_forwarded(db_session: AsyncSession) -> None:
+    """工具链路真流式: 编排器回调的 tool/token 事件逐段转发, 不重复整段."""
+    orc = _StreamingToolOrchestrator(tool_calls=[_tool_record(latency_ms=5.0)])
+    events = []
+    async for e in _service(db_session, orchestrator=orc).stream_events(
+        ChatRequest(message="帮我算 2 的 10 次方", user_id="u1")
+    ):
+        events.append(e)
+
+    types = [e["event"] for e in events]
+    assert types == ["retrieval", "tool_start", "tool_end", "token", "token", "token", "done"]
+    # 逐段 token 拼接等于完整答案, 且未重复整段回传
+    deltas = [json.loads(e["data"])["delta"] for e in events if e["event"] == "token"]
+    assert "".join(deltas) == "计算结果: 1024"
+    assert len(deltas) == 3
+
+
 # ── 记忆集成(memory_manager 注入) ──
 
 
@@ -282,6 +385,25 @@ async def test_chat_no_recall_without_user_id(db_session: AsyncSession) -> None:
     memory = FakeMemoryManager()
     await _memory_service(db_session, memory).chat(ChatRequest(message="你好"))
     assert memory.recall_calls == []
+
+
+async def test_chat_empty_retrieval_allows_llm_knowledge(db_session: AsyncSession) -> None:
+    """检索结果为空时: 系统提示允许 LLM 用自身知识回答(不再要求拒答)."""
+    llm = FakeChatLLM()
+    retriever = FakeRetriever(chunks=[])  # 空检索
+    service = ChatService(
+        session=db_session,
+        retriever=retriever,
+        llm=llm,
+    )
+    resp = await service.chat(ChatRequest(message="员工报销流程是什么?", user_id="u1"))
+
+    assert resp.answer == llm.answer
+    system = llm.last_messages[0]["content"]
+    # 提示词明确允许用自身知识兜底, 且上下文标注未检索到
+    assert "可用自身知识回答" in system
+    assert "知识库未检索到相关内容" in system
+    assert resp.citations == []
 
 
 # ── Multi-Agent 编排接入 ──
@@ -368,6 +490,49 @@ async def test_chat_stream_multi_agent_failure_falls_back(db_session: AsyncSessi
     assert "progress" not in types
     assert "token" in types
     assert types[-1] == "done"
+
+
+class _StreamingMultiAgent(FakeMultiAgentOrchestrator):
+    """fake 多 Agent 编排器: 调用 on_progress/on_token 回调, 模拟真实流式行为."""
+
+    async def run(
+        self, query, session_id=None, context="", history=None, on_token=None, on_progress=None
+    ):
+        from knowflow.agents.orchestrator import MultiAgentResult
+
+        if on_progress is not None:
+            await on_progress({"delegated": True, "subtasks": ["t1", "t2"], "run_id": 1})
+        if on_token is not None:
+            for part in ("汇总", "答案"):
+                await on_token(part)
+        return MultiAgentResult(
+            run_id=1,
+            delegated=True,
+            answer=self.answer,
+            intent="complex",
+            subtasks=list(self.subtasks),
+            checkpoint_id="ckpt-1",
+            latency_ms=10.0,
+        )
+
+
+async def test_chat_stream_multi_agent_callbacks_forwarded(db_session: AsyncSession) -> None:
+    """Multi-Agent 链路真流式: progress 先于逐段 token, 且不重复整段回传."""
+    multi = _StreamingMultiAgent(answer="汇总答案")
+    service = _service(db_session, multi_agent=multi)
+    events = [
+        e
+        async for e in service.stream_events(
+            ChatRequest(message="对比 A 和 B 的价格", user_id="u1")
+        )
+    ]
+    types = [e["event"] for e in events]
+    assert types[0] == "retrieval"
+    assert types[1] == "progress"  # 回调进度先于 token 流
+    assert types[-1] == "done"
+    deltas = [json.loads(e["data"])["delta"] for e in events if e["event"] == "token"]
+    assert "".join(deltas) == "汇总答案"
+    assert len(deltas) == 2
 
 
 async def test_chat_multi_agent_receives_history(db_session: AsyncSession) -> None:

@@ -25,6 +25,7 @@ from knowflow.api.deps import (
 )
 from knowflow.api.sse import sse_stream
 from knowflow.db.repositories.session_repo import MessageRepo, SessionRepo
+from knowflow.retrieval.query_rewriter import QueryRewriter
 from knowflow.schemas.chat import ChatRequest, ChatResponse
 from knowflow.schemas.common import ApiResponse, PageResponse
 from knowflow.schemas.session import MessageOut, SessionOut
@@ -71,6 +72,7 @@ async def chat(
         memory_manager=memory_manager,
         context_manager=context_manager,
         multi_agent=multi_agent,
+        query_rewriter=QueryRewriter(llm),
     )
     return await service.chat(req)
 
@@ -98,6 +100,7 @@ async def chat_stream(
         memory_manager=memory_manager,
         context_manager=context_manager,
         multi_agent=multi_agent,
+        query_rewriter=QueryRewriter(llm),
     )
     return EventSourceResponse(sse_stream(request, service.stream_events(req)))
 

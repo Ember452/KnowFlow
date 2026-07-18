@@ -12,6 +12,7 @@ retrieval → [tool_start/tool_end]* → token* → done, 异常时 yield error 
 P7 之前历史注入为"最近 window_max_turns 轮全量注入", 后续交给上下文工程替换.
 """
 
+import asyncio
 import contextlib
 import time
 import uuid
@@ -32,12 +33,12 @@ from knowflow.schemas.chat import ChatRequest, ChatResponse, Citation
 
 logger = get_logger(__name__)
 
-# 系统提示: 要求基于检索上下文作答并标注来源, 检索不到时如实说明
+# 系统提示: 优先基于检索上下文作答并标注来源; 检索为空时允许用自身知识兜底并如实注明
 _SYSTEM_PROMPT_TEMPLATE = """你是 KnowFlow 企业知识库助手, 基于提供的知识片段回答问题.
 要求:
 1. 优先使用检索上下文回答, 不要编造事实
 2. 引用来源时用 [n] 标注(对应检索片段序号)
-3. 检索片段无法回答时, 如实说明"知识库中未找到相关信息"
+3. 检索上下文为空或无法回答时, 可用自身知识回答, 但开头注明"未检索到知识库内容, 以下为模型知识回答"
 4. 回答使用简洁的 Markdown 格式
 
 检索上下文:
@@ -67,6 +68,7 @@ class ChatService:
         memory_manager: MemoryManager(观察/沉淀/召回)或 fake. None 时无记忆能力.
         context_manager: ContextManager(窗口/摘要/卸载/预算)或 fake. None 时用内置组装.
         multi_agent: MultiAgentOrchestrator(实现 async run)或 fake. None 时无多 Agent 编排.
+        query_rewriter: QueryRewriter(实现 async rewrite)或 fake. None 时不启用 query 改写.
     """
 
     def __init__(
@@ -79,6 +81,7 @@ class ChatService:
         memory_manager: MemoryManager | None = None,
         context_manager: Any | None = None,
         multi_agent: Any | None = None,
+        query_rewriter: Any | None = None,
     ) -> None:
         self.session = session
         self.retriever = retriever
@@ -88,6 +91,7 @@ class ChatService:
         self._memory_manager = memory_manager
         self._context_manager = context_manager
         self._multi_agent = multi_agent
+        self._query_rewriter = query_rewriter
         self._sessions = SessionRepo(session)
         self._messages = MessageRepo(session)
         self._turns = TurnRepo(session)
@@ -97,6 +101,17 @@ class ChatService:
     def _get_llm(self) -> Any:
         """取 LLM: 优先注入实例, 否则懒加载全局单例."""
         return self._llm if self._llm is not None else get_chat_llm()
+
+    async def _rewrite_query(self, query: str, history: list[dict[str, str]]) -> str:
+        """改写 query(多轮指代消解), 未注入改写器/无历史/改写失败时原样返回."""
+        if self._query_rewriter is None or not history:
+            return query
+        try:
+            rewritten = await self._query_rewriter.rewrite(query, history)
+            return str(rewritten) if rewritten is not None else query
+        except Exception as exc:
+            logger.warning("chat.query_rewrite_failed_fallback", error=str(exc))
+            return query
 
     async def _ensure_session(self, session_id: str | None, user_id: str | None) -> int:
         """校验/创建会话, 返回会话 id."""
@@ -128,7 +143,7 @@ class ChatService:
     def _format_context(chunks: list[Any]) -> str:
         """检索片段格式化为上下文文本([n] 标注), 供 prompt 与工具编排器注入."""
         context_lines = [f"[{i + 1}] {c.content}" for i, c in enumerate(chunks)]
-        return "\n\n".join(context_lines) if context_lines else "(无检索结果)"
+        return "\n\n".join(context_lines) if context_lines else "(知识库未检索到相关内容)"
 
     @staticmethod
     def _build_messages(
@@ -148,7 +163,14 @@ class ChatService:
     def _to_citations(chunks: list[Any]) -> list[Citation]:
         """检索 chunk 转引用列表(content 截断防 JSON 膨胀)."""
         return [
-            Citation(chunk_id=c.chunk_id, content=c.content[:500], score=c.score, source=c.source)
+            Citation(
+                chunk_id=c.chunk_id,
+                content=c.content[:500],
+                score=c.score,
+                source=c.source,
+                doc_id=c.doc_id,
+                doc_title=c.doc_title,
+            )
             for c in chunks
         ]
 
@@ -227,7 +249,9 @@ class ChatService:
         )
         await self._observe_and_sediment(session_id, req.user_id, "user", req.message)
 
-        result = await self.retriever.retrieve(req.message, top_k=self.settings.retrieval_top_k)
+        result = await self.retriever.retrieve(
+            await self._rewrite_query(req.message, history), top_k=self.settings.retrieval_top_k
+        )
         citations = self._to_citations(result.chunks)
         memory_text = await self._recall_memories(req.message, req.user_id)
 
@@ -353,7 +377,7 @@ class ChatService:
     # ── 流式对话(SSE) ──
 
     async def stream_events(self, req: ChatRequest) -> AsyncIterator[dict[str, Any]]:
-        """SSE 事件流: retrieval → [tool_start/tool_end]* → token* → done; 异常时 error."""
+        """SSE 事件流: retrieval → [progress/tool_start/tool_end]* → token* → done; 异常时 error."""
         start = time.perf_counter()
         try:
             session_id = await self._ensure_session(req.session_id, req.user_id)
@@ -364,7 +388,9 @@ class ChatService:
             await self._observe_and_sediment(session_id, req.user_id, "user", req.message)
 
             # 检索并先回传 retrieval 事件, 客户端可先行渲染引用
-            result = await self.retriever.retrieve(req.message, top_k=self.settings.retrieval_top_k)
+            result = await self.retriever.retrieve(
+                await self._rewrite_query(req.message, history), top_k=self.settings.retrieval_top_k
+            )
             citations = self._to_citations(result.chunks)
             yield make_event(
                 "retrieval",
@@ -376,6 +402,8 @@ class ChatService:
                             "content": c.content,
                             "score": c.score,
                             "source": c.source,
+                            "doc_id": c.doc_id,
+                            "doc_title": c.doc_title,
                         }
                         for c in result.chunks
                     ],
@@ -386,28 +414,61 @@ class ChatService:
 
             # Multi-Agent 版: 复杂任务走编排(委派/并发/汇总), 进度与结果以事件回传
             if self._multi_agent is not None:
-                try:
-                    ma = await self._multi_agent.run(
+                # 经队列桥接流式回调: 编排运行期间逐段消费并转发 SSE 事件
+                q = asyncio.Queue[Any]()
+                got_progress = False
+                got_token = False
+
+                async def on_token(delta: str) -> None:
+                    await q.put(("token", delta))
+
+                async def on_progress(payload: dict[str, Any]) -> None:
+                    await q.put(("progress", payload))
+
+                run_task = asyncio.create_task(
+                    self._multi_agent.run(
                         req.message,
                         session_id,
                         context=self._format_context(result.chunks),
                         history=history,
+                        on_token=on_token,
+                        on_progress=on_progress,
                     )
+                )
+                while True:
+                    if run_task.done() and q.empty():
+                        break
+                    try:
+                        kind, payload = await asyncio.wait_for(q.get(), timeout=0.2)
+                    except TimeoutError:
+                        continue
+                    if kind == "progress":
+                        got_progress = True
+                        yield make_event("progress", payload)
+                    elif kind == "token":
+                        got_token = True
+                        yield make_event("token", {"delta": payload})
+                try:
+                    ma = await run_task
                 except Exception as exc:
                     # 编排失败(如 checkpoint PG 不可用)不中断 SSE, 回退直连链路
                     logger.warning("chat.stream_multi_agent_failed_fallback", error=str(exc))
                     ma = None
                 if ma is not None and ma.intent == "complex" and ma.answer:
-                    yield make_event(
-                        "progress",
-                        {
-                            "stage": "multi_agent",
-                            "delegated": ma.delegated,
-                            "subtasks": [s.id for s in ma.subtasks],
-                            "run_id": ma.run_id,
-                        },
-                    )
-                    yield make_event("token", {"delta": ma.answer})
+                    # 编排器未回调进度时, 用返回结果补发(fake/非流式兼容)
+                    if not got_progress:
+                        yield make_event(
+                            "progress",
+                            {
+                                "stage": "multi_agent",
+                                "delegated": ma.delegated,
+                                "subtasks": [s.id for s in ma.subtasks],
+                                "run_id": ma.run_id,
+                            },
+                        )
+                    # 已流式回传 token 时不再重复; 否则整段回传(兼容 fake)
+                    if not got_token:
+                        yield make_event("token", {"delta": ma.answer})
                     async for event in self._finalize_stream(
                         session_id,
                         user_msg,
@@ -425,40 +486,85 @@ class ChatService:
                 context = self._format_context(result.chunks)
                 if memory_text:
                     context += f"\n\n用户记忆:\n{memory_text}"
-                orc = await self._orchestrator.run(
-                    req.message,
-                    session_id=str(session_id),
-                    history=history,
-                    context=context,
+                # 经队列桥接流式回调: 编排运行期间逐段消费并转发 SSE 事件
+                q = asyncio.Queue[Any]()
+                emitted_calls: list[str] = []  # 已回传 tool 事件的 call_id
+                got_token = False
+
+                async def on_tool(record: Any) -> None:
+                    await q.put(("tool", record))
+
+                async def on_token(delta: str) -> None:
+                    await q.put(("token", delta))
+
+                run_task = asyncio.create_task(
+                    self._orchestrator.run(
+                        req.message,
+                        session_id=str(session_id),
+                        history=history,
+                        context=context,
+                        on_token=on_token,
+                        on_tool=on_tool,
+                    )
                 )
-                if not orc.no_tools:
-                    for tc in orc.tool_calls:
-                        # call_id 关联同一调用的 start/end, 供前端展示并发工具调用时精确匹配
+                # 编排运行期间边收边转: 先消费完回调事件, 再取编排结果
+                while True:
+                    if run_task.done() and q.empty():
+                        break
+                    try:
+                        kind, payload = await asyncio.wait_for(q.get(), timeout=0.2)
+                    except TimeoutError:
+                        continue
+                    if kind == "tool":
                         call_id = uuid.uuid4().hex[:16]
+                        emitted_calls.append(call_id)
                         yield make_event(
                             "tool_start",
-                            {"tool": tc.tool_name, "args": tc.args, "call_id": call_id},
+                            {"tool": payload.tool_name, "args": payload.args, "call_id": call_id},
                         )
                         yield make_event(
                             "tool_end",
                             {
-                                "tool": tc.tool_name,
+                                "tool": payload.tool_name,
                                 "call_id": call_id,
-                                "success": tc.success,
-                                "latency_ms": tc.latency_ms,
-                                "error": tc.error,
+                                "success": payload.success,
+                                "latency_ms": payload.latency_ms,
+                                "error": payload.error,
                             },
                         )
+                    elif kind == "token":
+                        got_token = True
+                        yield make_event("token", {"delta": payload})
+                orc = await run_task
+                if not orc.no_tools:
+                    # 编排器未回调工具事件时, 用返回结果补发(fake/非流式兼容)
+                    if not emitted_calls:
+                        for tc in orc.tool_calls:
+                            call_id = uuid.uuid4().hex[:16]
+                            yield make_event(
+                                "tool_start",
+                                {"tool": tc.tool_name, "args": tc.args, "call_id": call_id},
+                            )
+                            yield make_event(
+                                "tool_end",
+                                {
+                                    "tool": tc.tool_name,
+                                    "call_id": call_id,
+                                    "success": tc.success,
+                                    "latency_ms": tc.latency_ms,
+                                    "error": tc.error,
+                                },
+                            )
                     answer = orc.answer or "(无内容)"
-                    tool_calls = self._to_tool_calls_payload(orc.tool_calls)
-                    # 工具链路最终答案一次性以 token 事件回传, 保持事件序列兼容
-                    yield make_event("token", {"delta": answer})
+                    # 已流式回传 token 时不再重复; 否则整段回传(兼容 fake)
+                    if not got_token:
+                        yield make_event("token", {"delta": answer})
                     async for event in self._finalize_stream(
                         session_id,
                         user_msg,
                         answer,
                         citations,
-                        tool_calls,
+                        self._to_tool_calls_payload(orc.tool_calls),
                         start,
                         user_id=req.user_id,
                     ):
