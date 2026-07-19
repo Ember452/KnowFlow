@@ -1,8 +1,12 @@
-"""entity_extractor 单测 - JSON 解析 / 重试 / 归一 / 降级."""
+"""entity_extractor 单测 - JSON 解析 / 重试 / 归一 / 降级 / 超时配置."""
 
 from dataclasses import dataclass
+from typing import Any
+
+import pytest
 
 from knowflow.retrieval.entity_extractor import (
+    _LLM_TIMEOUT_S,
     Entity,
     EntityExtractor,
     ExtractResult,
@@ -57,16 +61,12 @@ def test_parse_json_with_prefix() -> None:
 
 def test_parse_json_empty_raises() -> None:
     """空输入抛 ValueError."""
-    import pytest
-
     with pytest.raises(ValueError):
         _parse_json("")
 
 
 def test_parse_json_invalid_raises() -> None:
     """非法 JSON 抛 ValueError."""
-    import pytest
-
     with pytest.raises(ValueError):
         _parse_json("{invalid json}")
 
@@ -147,6 +147,60 @@ def test_extract_degraded_after_max_retries() -> None:
     assert result.relations == []
     # 初次 + 2 次重试 = 3 次调用
     assert llm.call_count == 3
+
+
+class ThrowingLLM:
+    """fake LLM: invoke 抛异常(模拟超时/网络故障), 可按次数转成功."""
+
+    def __init__(self, exception: Exception, *, succeed_after: int = -1) -> None:
+        self.exception = exception
+        self.succeed_after = succeed_after  # 第 N 次调用后开始成功, -1 表示一直失败
+        self.call_count = 0
+
+    def invoke(self, prompt: str) -> FakeMessage:
+        self.call_count += 1
+        if 0 <= self.succeed_after < self.call_count:
+            return FakeMessage(content='{"entities": [], "relations": []}')
+        raise self.exception
+
+
+def test_extract_degraded_on_llm_exception() -> None:
+    """LLM 调用抛非解析类异常(如超时)时重试后降级, 不抛异常不阻塞索引."""
+    llm = ThrowingLLM(RuntimeError("connection timeout"))
+    extractor = EntityExtractor(llm=llm, max_retries=2)
+    result = extractor.extract("some text")
+
+    assert result.entities == []
+    assert result.relations == []
+    # 初次 + 2 次重试 = 3 次调用
+    assert llm.call_count == 3
+
+
+def test_extract_recovers_after_llm_exception() -> None:
+    """首次调用异常, 重试后成功返回正常结果."""
+    llm = ThrowingLLM(TimeoutError("read timeout"), succeed_after=1)
+    extractor = EntityExtractor(llm=llm, max_retries=2)
+    result = extractor.extract("some text")
+
+    assert result.entities == []
+    assert result.relations == []
+    assert llm.call_count == 2  # 第一次抛异常, 第二次成功
+
+
+def test_chat_openai_timeout_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """懒加载的 ChatOpenAI 必须配置超时, 防止 LLM API 挂起时无限等待."""
+    captured: dict[str, Any] = {}
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    import langchain_openai
+
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", FakeChatOpenAI)
+    extractor = EntityExtractor()
+    extractor._get_llm()
+    assert captured["timeout"] == _LLM_TIMEOUT_S
 
 
 def test_extract_no_entities_no_relations() -> None:

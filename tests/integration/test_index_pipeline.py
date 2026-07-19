@@ -26,6 +26,9 @@ from tests.fakes import FakeBroker, FakeMinio
 
 
 class _FakeEmbedding:
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return [[float(len(t)), 0.0] for t in texts]
+
     def embed_one(self, text: str) -> list[float]:
         return [float(len(text)), 0.0]
 

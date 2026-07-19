@@ -4,6 +4,7 @@
 外部依赖(MinIO/Embedding/EntityExtractor/VectorStore/BM25Store)用 fake 注入.
 """
 
+import threading
 from typing import Any
 
 import pytest
@@ -43,11 +44,14 @@ class FakeEmbeddingClient:
     """Fake embedding, 返回固定维度向量."""
 
     def __init__(self) -> None:
-        self.calls = 0
+        self.embed_calls: list[list[str]] = []
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.embed_calls.append(list(texts))
+        return [[float(len(t)), 0.0, 0.0] for t in texts]
 
     def embed_one(self, text: str) -> list[float]:
-        self.calls += 1
-        return [float(len(text)), 0.0, 0.0]
+        return self.embed([text])[0]
 
 
 class FakeEntityExtractor:
@@ -58,6 +62,24 @@ class FakeEntityExtractor:
         self.calls = 0
 
     def extract(self, chunk_text: str) -> ExtractResult:
+        self.calls += 1
+        return self.result
+
+
+class ThreadTrackingExtractor(FakeEntityExtractor):
+    """记录 extract 执行线程 id, 用于验证同步 LLM 调用已移入线程池."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            result=ExtractResult(
+                entities=[ExtractedEntity(name="Hello", type="concept", normalized="hello")],
+                relations=[],
+            )
+        )
+        self.exec_thread_id: int | None = None
+
+    def extract(self, chunk_text: str) -> ExtractResult:
+        self.exec_thread_id = threading.get_ident()
         self.calls += 1
         return self.result
 
@@ -165,8 +187,9 @@ async def test_index_document_success(db_session: Any) -> None:
     assert len(vector_store.upserts) == result.chunk_count
     # BM25 写入
     assert len(bm25_store.adds) == result.chunk_count
-    # embedding 调用次数 = chunk 数
-    assert embedding.calls == result.chunk_count
+    # embedding 批量调用: 一次传入全部 chunk 文本
+    assert len(embedding.embed_calls) == 1
+    assert len(embedding.embed_calls[0]) == result.chunk_count
     # 索引状态记录
     idx_repo = DocumentIndexRepo(db_session)
     indexes = await idx_repo.list_by_doc(doc.id)
@@ -270,6 +293,28 @@ async def test_index_document_with_relations(db_session: Any) -> None:
     result = await pipeline.index_document(doc.id)
 
     assert result.entity_count > 0
+    updated = await doc_repo.get(doc.id)
+    assert updated is not None
+    assert updated.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_index_document_extract_runs_in_thread(db_session: Any) -> None:
+    """实体抽取的同步 LLM 调用在独立线程执行, 不阻塞事件循环."""
+    doc_repo = DocumentRepo(db_session)
+    doc = await doc_repo.create(title="thread", source_uri="t.txt", file_type="txt", size_bytes=50)
+    await db_session.commit()
+
+    extractor = ThreadTrackingExtractor()
+    minio = FakeMinio(b"Hello world. Thread test content.")
+    deps, *_ = _make_deps(db_session, minio=minio, extractor=extractor)
+    pipeline = RetrievalPipeline(deps)
+
+    await pipeline.index_document(doc.id)
+
+    # 断言 extract 在事件循环线程之外执行(asyncio.to_thread 生效)
+    assert extractor.exec_thread_id is not None
+    assert extractor.exec_thread_id != threading.get_ident()
     updated = await doc_repo.get(doc.id)
     assert updated is not None
     assert updated.status == "ready"

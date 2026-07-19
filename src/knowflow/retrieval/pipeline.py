@@ -3,7 +3,8 @@
 完整链路:
     DocumentRepo.get(doc_id) -> MinIO 下载 -> parser.parse -> splitter.split
     -> DocumentRepo.update_status("indexing")
-    -> 逐块: ChunkRepo.create -> embedding.embed_one -> VectorStore.upsert -> BM25Store.add_batch
+    -> embedding.embed(批量推理) -> 逐块: ChunkRepo.create
+    -> VectorStore.upsert -> BM25Store.add_batch
     -> 逐块: entity_extractor.extract -> GraphStore.upsert_entities + upsert_relations
     -> DocumentRepo.update_status("ready") + DocumentIndexRepo.upsert(vector/graph/bm25)
 
@@ -11,6 +12,7 @@
 reindex_document 先清理向量/BM25/chunks(DB 级联 entities/relations) 再调 index_document.
 """
 
+import asyncio
 import contextlib
 import os
 import tempfile
@@ -22,6 +24,7 @@ from typing import Any
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from knowflow.context.token_counter import TokenCounter
 from knowflow.core.config import get_settings
 from knowflow.core.exceptions import AppError, NotFoundError
 from knowflow.core.logging import get_logger
@@ -88,6 +91,7 @@ class RetrievalPipeline:
         self._chunk_size = settings.chunk_size
         self._chunk_overlap = settings.chunk_overlap
         self._bucket = deps.bucket or settings.minio_bucket
+        self._token_counter = TokenCounter()
 
     async def index_document(self, doc_id: int) -> IndexResult:
         """索引单个文档.
@@ -112,6 +116,7 @@ class RetrievalPipeline:
             text = self._fetch_text(doc.source_uri, doc.file_type)
 
             # 2. 分块
+            # 这个优先按照段落切割，如果切割后的长,进行句子切割，最后还不行，降级为固定size切割  # noqa: E501, RUF003
             if self.deps.split_fn is not None:
                 chunks_text = self.deps.split_fn(
                     text, chunk_size=self._chunk_size, overlap=self._chunk_overlap
@@ -119,18 +124,21 @@ class RetrievalPipeline:
             else:
                 from knowflow.retrieval.indexer.splitter import split
 
+                # 如果不成功, 采用简单在字符分块
                 chunks_text = split(text, chunk_size=self._chunk_size, overlap=self._chunk_overlap)
 
             # 3. 状态置 indexing
             await self.deps.document_repo.update_status(doc_id, "indexing")
             await self.deps.session.commit()
 
-            # 4. 逐块: chunk + embedding + vector + bm25
+            # 4. embedding 批量推理(内部按 batch_size 切片), 逐块写库
+            vectors = self.deps.embedding_client.embed(chunks_text)
             chunk_orms: list[Chunk] = []
             chunk_vectors: list[ChunkVector] = []
             bm25_docs: list[BM25Doc] = []
             for i, ct in enumerate(chunks_text):
-                token_count = len(ct)  # 简化: 字符数近似 token 数
+                token_count = self._token_counter.count(ct)
+                # 写入PostgreSQL 结构化元数据:为了事务一致性和关系查询
                 chunk = await self.deps.chunk_repo.create(
                     doc_id=doc_id,
                     content=ct,
@@ -138,28 +146,33 @@ class RetrievalPipeline:
                     token_count=token_count,
                 )
                 chunk_orms.append(chunk)
-                vec = self.deps.embedding_client.embed_one(ct)
-                chunk_vectors.append(ChunkVector(chunk_id=chunk.id, doc_id=doc_id, embedding=vec))
+                # 生成向量,并存入Milvus向量库
+                chunk_vectors.append(
+                    ChunkVector(chunk_id=chunk.id, doc_id=doc_id, embedding=vectors[i])
+                )
+                # 构建bm25索引文档
                 bm25_docs.append(BM25Doc(chunk_id=chunk.id, content=ct, doc_id=doc_id))
 
             if chunk_vectors:
                 self.deps.vector_store.upsert(chunk_vectors)
             if bm25_docs:
+                # 将bm25索引文档写入应用程序内存中
                 self.deps.bm25_store.add_batch(bm25_docs)
 
             # 5. 逐块: 实体抽取 + 图谱写入
             total_entities = 0
             total_relations = 0
-            all_name_to_id: dict[str, int] = {}
+            all_name_to_id: dict[str, int] = {}  # 实体名称-数据库ID映射
             for chunk in chunk_orms:
-                extract = self.deps.entity_extractor.extract(chunk.content)
+                # 同步 LLM 调用移入线程池: 避免 API 挂起时阻塞 worker 事件循环
+                extract = await asyncio.to_thread(self.deps.entity_extractor.extract, chunk.content)
                 if extract.entities:
                     orm_ents = await self.deps.graph_store.upsert_entities(
                         doc_id, chunk.id, extract.entities
                     )
                     for e in orm_ents:
-                        all_name_to_id[e.name] = e.id
-                    total_entities += len(orm_ents)
+                        all_name_to_id[e.name] = e.id  # 建立名称-ID映射
+                    total_entities += len(orm_ents)  # 统计计数
                 if extract.relations:
                     orm_rels = await self.deps.graph_store.upsert_relations(
                         doc_id, extract.relations, all_name_to_id
@@ -177,9 +190,9 @@ class RetrievalPipeline:
             duration_ms = (time.perf_counter() - start) * 1000
             return IndexResult(
                 doc_id=doc_id,
-                chunk_count=len(chunk_orms),
-                entity_count=total_entities,
-                relation_count=total_relations,
+                chunk_count=len(chunk_orms),  # 返回总分块数
+                entity_count=total_entities,  # 总实体数
+                relation_count=total_relations,  # 总关系数
                 duration_ms=duration_ms,
             )
         except Exception as exc:

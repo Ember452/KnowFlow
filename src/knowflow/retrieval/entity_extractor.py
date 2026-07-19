@@ -1,6 +1,6 @@
 """LLM 实体关系抽取 - 调 ChatOpenAI 输出 JSON, 解析为 Entity/Relation 数据类.
 
-抽取失败重试 2 次, 仍失败返回空结果(不阻塞索引) + warning 日志.
+调用超时(30s)或输出解析失败重试 2 次, 仍失败返回空结果(不阻塞索引) + warning 日志.
 单测通过构造时注入 fake llm 绕过真实 API 调用.
 """
 
@@ -18,6 +18,9 @@ _CODE_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 # 最大重试次数(初次 + 2 次重试 = 共 3 次调用)
 _MAX_RETRIES = 2
+
+# LLM 调用超时(秒): 防止 DeepSeek 等 API 偶发挂起时 worker 无限等待
+_LLM_TIMEOUT_S = 30
 
 # 抽取 prompt 模板: 要求 LLM 严格输出 JSON, 附 schema 示例
 _PROMPT_TEMPLATE = """请从以下文本中抽取命名实体与实体间关系, 严格输出 JSON, 不要包含任何解释文字.
@@ -106,6 +109,7 @@ class EntityExtractor:
             api_key=SecretStr(settings.llm_api_key),
             base_url=settings.llm_base_url,
             temperature=0.0,  # 抽取任务用确定性输出
+            timeout=_LLM_TIMEOUT_S,  # 超时后进入重试/降级, 不无限等待
         )
         return self._llm
 
@@ -133,10 +137,11 @@ class EntityExtractor:
                 entities = self.normalize([Entity(**e) for e in result.get("entities", [])])
                 relations = [Relation(**r) for r in result.get("relations", [])]
                 return ExtractResult(entities=entities, relations=relations)
-            except (ValueError, KeyError, TypeError) as exc:
+            except Exception as exc:
+                # 含 LLM 调用异常(超时/网络)与 JSON 解析失败, 一律重试后降级
                 last_error = f"{type(exc).__name__}: {exc}"
                 logger.warning(
-                    "entity_extractor.parse_failed",
+                    "entity_extractor.attempt_failed",
                     attempt=attempt + 1,
                     max_retries=self._max_retries + 1,
                     error=last_error,

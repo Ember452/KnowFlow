@@ -59,10 +59,14 @@ class EmbeddingClient:
                 from pydantic import SecretStr
 
                 logger.info("embedding.api_init", model=self.model_name)
+                # check_embedding_ctx_length=False: 避免 langchain 用 tiktoken 把文本
+                # 转成 token id 数组再请求(OpenAI 支持, 但 DashScope 兼容接口只接受
+                # str 或 list[str], 会返回 400); 长度安全由调用方分批保证
                 self._model = OpenAIEmbeddings(
                     model=self.model_name,
                     api_key=SecretStr(settings.embedding_api_key),
                     base_url=settings.embedding_base_url,
+                    check_embedding_ctx_length=False,
                 )
             else:
                 # 延迟导入: 避免模块加载时拉起 torch
