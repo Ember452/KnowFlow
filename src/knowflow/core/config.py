@@ -33,6 +33,8 @@ class Settings(BaseSettings):
 
     # ── Redis ──
     redis_url: str = "redis://localhost:6379/0"
+    # socket 读取超时秒数; 须大于 task_block_ms(阻塞读期间会命中该超时), 过小会误杀 XREADGROUP
+    redis_socket_timeout: float = 10.0
 
     # ── Milvus ──
     milvus_uri: str = "http://localhost:19530"

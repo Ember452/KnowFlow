@@ -5,7 +5,7 @@
 - reindex: 重建索引(先清理向量/BM25/chunks 再索引)
 
 依赖外部单例: PG session factory / MinIO / Milvus / Embedding / EntityExtractor /
-BM25Store(与 API 检索器共享同进程单例). 跨进程时 BM25 不共享, 见 docs/tests 说明.
+BM25Store(启动时从 chunks 表全量加载). 进程内增量写入不跨进程同步, 重启后恢复一致.
 """
 
 from collections.abc import Callable

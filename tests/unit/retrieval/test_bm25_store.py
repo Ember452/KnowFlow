@@ -1,10 +1,13 @@
 """bm25_store 单测 - 构建 / 查询 / 增量 / 删除 / 中文 tokenization."""
 
+import pytest
+
 from knowflow.retrieval.bm25_store import (
     BM25Doc,
     BM25Store,
     dispose_bm25_store,
     get_bm25_store,
+    init_bm25_store,
     tokenize,
 )
 
@@ -88,6 +91,55 @@ def test_search_chinese() -> None:
     hits = store.search("张三", top_k=2)
     assert len(hits) >= 1
     assert hits[0].chunk_id == 1
+
+
+# ── 全量重建(rebuild) ──
+
+
+def test_rebuild_replaces_corpus() -> None:
+    """rebuild 用新语料覆盖旧索引."""
+    store = BM25Store([BM25Doc(chunk_id=1, content="apple", doc_id=1)])
+    store.rebuild([BM25Doc(chunk_id=2, content="banana", doc_id=2)])
+    assert store.size == 1
+    assert store.search("apple", top_k=5) == []
+    hits = store.search("banana", top_k=5)
+    assert len(hits) == 1
+    assert hits[0].chunk_id == 2
+
+
+def test_rebuild_empty_clears() -> None:
+    """rebuild 空语料清空索引."""
+    store = BM25Store([BM25Doc(chunk_id=1, content="apple", doc_id=1)])
+    store.rebuild([])
+    assert store.size == 0
+    assert store.search("apple", top_k=5) == []
+
+
+# ── 启动加载(init_bm25_store) ──
+
+
+@pytest.mark.asyncio
+async def test_init_bm25_store_loads_from_chunks(api_session_factory) -> None:  # type: ignore[no-untyped-def]
+    """init_bm25_store 从 chunks 表全量加载到进程内单例."""
+    from knowflow.db.repositories.document_repo import ChunkRepo, DocumentRepo
+
+    async with api_session_factory() as session:
+        repo = DocumentRepo(session)
+        doc = await repo.create(title="t", source_uri="s", file_type="md", size_bytes=1)
+        await ChunkRepo(session).create(
+            doc_id=doc.id, content="Python 检索优化", chunk_index=0, token_count=3
+        )
+        await session.commit()
+
+    dispose_bm25_store()
+    try:
+        await init_bm25_store(api_session_factory)
+        store = get_bm25_store()
+        assert store.size == 1
+        hits = store.search("检索", top_k=5)
+        assert len(hits) == 1
+    finally:
+        dispose_bm25_store()
 
 
 # ── 增量追加 ──

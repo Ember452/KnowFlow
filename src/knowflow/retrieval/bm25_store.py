@@ -2,7 +2,7 @@
 
 设计文档 3.4 写 "PostgreSQL tsvector", 本实现取 rank-bm25 等价:
 - 依赖已在 pyproject 声明, 单测可直接跑
-- 不依赖 PG 容器, 启动时从 chunks 表全量重建
+- 不依赖 PG 容器, 启动时由 init_bm25_store 从 chunks 表全量重建
 - 如生产需要 PG tsvector, 仅需替换本文件, 调用方接口不变
 
 tokenize 策略: 中英文混合 - 英文按空格分词(小写化), 中文按单字符切分.
@@ -13,8 +13,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from rank_bm25 import BM25Okapi
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from knowflow.core.logging import get_logger
+from knowflow.models.document import Chunk
 
 logger = get_logger(__name__)
 
@@ -100,10 +103,10 @@ class BM25Store:
         self._entries: list[_IndexEntry] = []
         self._bm25: BM25Okapi | None = None
         if corpus:
-            self._build_from_corpus(corpus)
+            self.rebuild(corpus)
 
-    def _build_from_corpus(self, corpus: Sequence[BM25Doc]) -> None:
-        """从语料构建内部索引."""
+    def rebuild(self, corpus: Sequence[BM25Doc]) -> None:
+        """全量重建索引(启动加载/重置用, 覆盖现有语料)."""
         self._entries = [
             _IndexEntry(
                 chunk_id=d.chunk_id,
@@ -198,6 +201,26 @@ class BM25Store:
 # ── 进程内单例管理 ──
 
 _bm25_store: BM25Store | None = None
+
+
+async def init_bm25_store(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    """启动时从 chunks 表全量加载 BM25 索引到进程内单例.
+
+    幂等: 可重复调用, 每次以 DB 全量为准重建. API 与 Worker 进程各自调用,
+    各自持有同源索引(进程内增量写入不跨进程同步, 重启后恢复一致).
+
+    Args:
+        session_factory: 已初始化的 session factory.
+    """
+    global _bm25_store
+    async with session_factory() as session:
+        result = await session.execute(select(Chunk.id, Chunk.content, Chunk.doc_id))
+        rows = result.all()
+    corpus = [BM25Doc(chunk_id=cid, content=content, doc_id=did) for cid, content, did in rows]
+    if _bm25_store is None:
+        _bm25_store = BM25Store()
+    _bm25_store.rebuild(corpus)
+    logger.info("bm25.index_loaded", chunk_count=len(corpus))
 
 
 def get_bm25_store() -> BM25Store:

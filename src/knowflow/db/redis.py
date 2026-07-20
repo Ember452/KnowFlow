@@ -18,6 +18,8 @@ async def init_redis() -> Redis:
         settings.redis_url,
         decode_responses=True,
         max_connections=20,
+        # 阻塞读(XREADGROUP block=5s)期间 socket 超时须大于 block 时间, 否则误杀消费
+        socket_timeout=settings.redis_socket_timeout,
     )
     await _redis.ping()
     logger.info("db.redis_initialized", url=settings.redis_url)

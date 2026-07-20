@@ -17,20 +17,29 @@ from worker.settings import WorkerSettings
 
 logger = get_logger("worker")
 
+_RETRY_BASE_DELAY_S = 1.0  # Redis 故障重试初始退避(秒)
+_RETRY_MAX_DELAY_S = 30.0  # 退避上限(秒)
+
 
 async def _init_deps() -> None:
     """初始化全部外部依赖(与 API 共用单例)."""
-    from knowflow.db.base import dispose_engine, init_engine
+    from knowflow.db.base import dispose_engine, get_session_factory, init_engine
+    from knowflow.db.milvus import dispose_milvus, init_milvus
     from knowflow.db.minio import dispose_minio, init_minio
     from knowflow.db.redis import dispose_redis, init_redis
+    from knowflow.retrieval.bm25_store import init_bm25_store
 
-    # Milvus 在 index_task 内部按需初始化(VectorStore 懒加载), 此处不强制
     await init_engine()
+    # BM25 启动时从 chunks 表全量加载(与 API 进程各自持有同源索引, 增量不跨进程同步)
+    await init_bm25_store(get_session_factory())
     await init_redis()
     init_minio()
+    # 索引任务写入向量, 必须在消费前建立 Milvus 连接(VectorStore 构造时取单例, 非懒加载)
+    init_milvus()
     # 注册关闭(逆序)
     _SHUTDOWN.append(dispose_minio)
     _SHUTDOWN.append(dispose_redis)
+    _SHUTDOWN.append(dispose_milvus)
     _SHUTDOWN.append(dispose_engine)
 
 
@@ -73,15 +82,36 @@ async def run() -> None:
 
     logger.info("worker.consuming", consumer=ws.consumer, block_ms=ws.block_ms)
     try:
-        while not stop_event.is_set():
-            messages = await broker.consume(
-                ws.stream, ws.group, ws.consumer, count=ws.batch_size, block_ms=ws.block_ms
-            )
-            for msg in messages:
-                await _process(broker, ws, msg)
+        await _consume_loop(broker, ws, stop_event)
     finally:
         await _dispose()
         logger.info("worker.stopped")
+
+
+async def _consume_loop(broker: TaskBroker, ws: WorkerSettings, stop_event: asyncio.Event) -> None:
+    """消费循环: 处理消息; Redis 瞬时故障(超时/断连)时指数退避重试, 保持进程存活.
+
+    虚拟机 Redis 偶发抖动/超时会中断阻塞读, 直接抛出会让 worker 进程崩溃退出;
+    此处捕获后短暂退避重试, 恢复后自动继续消费, 无需人工重启.
+    """
+    retry_delay = _RETRY_BASE_DELAY_S
+    while not stop_event.is_set():
+        try:
+            messages = await broker.consume(
+                ws.stream, ws.group, ws.consumer, count=ws.batch_size, block_ms=ws.block_ms
+            )
+            retry_delay = _RETRY_BASE_DELAY_S
+        except (TimeoutError, ConnectionError, OSError) as exc:
+            logger.error(
+                "worker.redis_unavailable",
+                error=str(exc),
+                retry_in_s=round(retry_delay, 1),
+            )
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, _RETRY_MAX_DELAY_S)
+            continue
+        for msg in messages:
+            await _process(broker, ws, msg)
 
 
 async def _process(broker: TaskBroker, ws: WorkerSettings, msg: object) -> None:
@@ -98,7 +128,11 @@ async def _process(broker: TaskBroker, ws: WorkerSettings, msg: object) -> None:
         result = {"ok": False, "retryable": True, "doc_id": payload.get("doc_id")}
 
     if result["ok"]:
-        await broker.ack(ws.stream, ws.group, msg_id)
+        try:
+            await broker.ack(ws.stream, ws.group, msg_id)
+        except Exception as exc:
+            # ack 失败(Redis 抖动): 记录日志不中断消费循环; 消息留 PEL 供审计/补偿
+            logger.error("worker.ack_failed", msg_id=msg_id, error=str(exc))
         return
 
     if result["retryable"] and attempts + 1 < ws.max_retries:

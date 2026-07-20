@@ -56,6 +56,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # ── startup: 依次初始化依赖 ──
     await _safe_init("postgres", init_engine)
+    await _safe_init("bm25", _load_bm25)
     await _safe_init("redis", init_redis)
     await _safe_init("milvus", init_milvus)
     await _safe_init("minio", init_minio)
@@ -70,6 +71,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _dispose_ai_singletons()
     await _dispose_multi_agent()
     logger.info("lifecycle.stopped")
+
+
+async def _load_bm25() -> None:
+    """从 chunks 表全量加载 BM25 内存索引(重启后恢复, 失败不阻塞启动)."""
+    from knowflow.db.base import get_session_factory
+    from knowflow.retrieval.bm25_store import init_bm25_store
+
+    await init_bm25_store(get_session_factory())
 
 
 def _dispose_ai_singletons() -> None:
