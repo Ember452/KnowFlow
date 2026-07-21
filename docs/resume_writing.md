@@ -86,7 +86,7 @@ GitHub Actions CI 门禁（ruff / ruff-format / mypy / pytest --cov / pre-commit
 
 | 指标 | 实测值 | 溯源文件 | 复现命令 |
 |---|---|---|---|
-| 跨文档查询 MRR 0.80→0.87 | +0.0213 整体 MRR | `eval/reports/compare_20260608.md` | `uv run python eval/scripts/compare_baseline.py` |
+| 跨文档查询 MRR 0.80→0.87 | 50 条中 cross_doc 20 条：0.8000→0.8667；总体 MRR 0.6592→0.6804（+0.0213） | `eval/reports/final_report.md:21-22` | `uv run python eval/scripts/compare_baseline.py` |
 | GraphRAG Recall@10 提升 | -1.0%（未达 +8% 目标，如实呈现） | `eval/reports/compare_20260608.md` | 同上 |
 | 可见工具数下降 | -43.4% | `docs/benchmarks/tool_governance_20260807.md` | `uv run python scripts/benchmark_tools.py` |
 | Schema Token 下降 | -45.2% | `docs/benchmarks/tool_governance_20260807.md` | 同上 |
@@ -95,7 +95,7 @@ GitHub Actions CI 门禁（ruff / ruff-format / mypy / pytest --cov / pre-commit
 | 测试覆盖率 | 89%（src 整体） | commit-log M2 核心模块 ≥70% | `uv run pytest tests/unit -q --cov=src` |
 | 汇总 | 五指标总览 | `eval/reports/final_report.md` | - |
 
-> **诚实边界**（面试必须主动说明）：指标均为本地评测（合成语料 5 篇 43 chunk + 静态/真实双模式），无线上数据；FC 100% 是"预期工具在可见集中"的静态代理指标，真实 LLM 调用准确率需真实模式实测；检索 Recall@10 提升 -1.0% 未达 +8% 目标，跨文档场景 MRR 已现正向趋势。真实模式测试步骤见 `docs/tests/指标测试-*.md` 六份文档。
+> **诚实边界**（面试必须主动说明）：指标均为本地评测（合成语料 5 篇 43 chunk + 静态/真实双模式），无线上数据；FC 100% 是"预期工具在可见集中"的静态代理指标，真实 LLM 调用准确率需真实模式实测；检索 Recall@10 提升 -1.0% 未达 +8% 目标；简历的 MRR 0.80→0.87 仅指 50 条中 20 条跨文档子集（总体 MRR 0.6592→0.6804），跨文档场景已现正向趋势。真实模式测试步骤见 `docs/tests/指标测试-*.md` 六份文档。
 
 ---
 
@@ -112,4 +112,5 @@ GitHub Actions CI 门禁（ruff / ruff-format / mypy / pytest --cov / pre-commit
 | 为什么覆盖更新而不是丢弃？ | 内容取新表述保留最新信息，importance 取 max 不丢失重要性信号 |
 | 为什么卸载到沙盒而不直接丢？ | 工具结果可能被后续追问引用（"把刚才的数据存成 CSV"），写文件后可读回，只丢"上下文占用"不丢"数据" |
 | checkpoint_id 为什么用 uuid6？ | uuid1 时间戳低位在前会周期性回绕，saver 按字符串排序取最新会选错；uuid6 时间高位在前，字符串序=时间序 |
+| 简历写 MRR 0.80→0.87，总体呢？ | 50 条 = direct 15 / cross_doc 20 / semantic 15；0.80→0.87 仅跨文档 20 条子集（0.8000→0.8667），总体 MRR 0.6592→0.6804（+0.0213），Recall@10 -1.0% 未达 +8% 目标——主动亮细粒度口径比只报好看的子集更可信，可引 final_report.md 佐证 |
 | 指标怎么测的？ | 静态模式（合成语料 + 规则/代理指标）可复现；真实模式按 docs/tests/ 六份文档实测，如实说明口径与边界 |

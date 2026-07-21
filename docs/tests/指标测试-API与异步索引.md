@@ -204,10 +204,10 @@ uv run pytest tests/integration/test_index_pipeline.py -q
 
 ## 四、已知限制与说明
 
-1. **BM25 跨进程不共享**: BM25Store 为进程内内存索引, API 进程与 Worker 进程独立,
-   Worker 索引的 BM25 数据 API 进程不可见。生产单进程模式或 API 重启后从 chunks 重建可解决。
-   知识检索在多进程下主要由向量路(Milvus, 外部共享)召回, BM25 贡献受限 —— 属 M2 内存索引
-   设计的取舍, 不影响 M3 接口正确性。
+1. **BM25 进程内增量不跨进程同步**: BM25Store 为进程内内存索引, API 与 Worker 启动时各自
+   从 chunks 表全量加载(重启后恢复一致); 但索引新文档后仅更新所在进程的实例, 另一进程重启前
+   看不到增量。知识检索在多进程下主要由向量路(Milvus, 外部共享)召回, BM25 贡献受限 —— 属
+   M2 内存索引设计的取舍, 不影响 M3 接口正确性。
 2. **chat/agent/skill/memory/trace/eval 端点**: M3 仅占位返回 501, 主流程在 P5-P10 对应里程碑实现。
 3. **限流**: Redis 不可用时降级放行(不阻塞业务); 健康检查路径(/healthz、/readyz、/health)不限流。
 4. 秒传去重基于内容 sha256, 同内容重复上传返回 `duplicated=true` 不重复索引。
