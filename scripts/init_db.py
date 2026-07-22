@@ -111,7 +111,7 @@ async def _run(args: argparse.Namespace) -> int:
 
     if args.check:
         try:
-            _current_revision()
+            await asyncio.to_thread(_current_revision)
         except Exception as exc:
             logger.error("init_db.check_failed", error=str(exc))
             return 1
@@ -129,7 +129,7 @@ async def _run(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        _upgrade_head()
+        await asyncio.to_thread(_upgrade_head)
     except Exception as exc:
         logger.error("init_db.upgrade_failed", error=str(exc))
         return 1

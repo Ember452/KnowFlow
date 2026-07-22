@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KnowFlow · 企业知识库 Agent 平台 · 演示</title>
+<style>
+  :root {
+    --bg: #faf9f5;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --primary: #c96442;
+    --primary-dark: #a84e31;
+    --text: #2d2a26;
+    --muted: #8a857d;
+    --border: #e5e1d8;
+    --ok: #3d9a5f;
+    --warn: #c98a2d;
+    --err: #c0392b;
+    --code-bg: #2d2a26;
+    --code-text: #e8e6e1;
+    --code-inline: rgba(45, 42, 38, .08);
+    --toast-bg: #2d2a26;
+    --toast-text: #ffffff;
+    --radius: 10px;
+    --shadow: 0 1px 3px rgba(45, 42, 38, .08);
+  }
+  /* 暗色模式（对齐 web 前端 dark 主题 token） */
+  body.dark {
+    --bg: #1f1e1d;
+    --surface: #262624;
+    --surface-2: #2c2c2b;
+    --primary: #d97757;
+    --primary-dark: #e08a6c;
+    --text: #f1f1ef;
+    --muted: #b7b5a9;
+    --border: #3e3e38;
+    --ok: #8ca06f;
+    --warn: #d9a24a;
+    --err: #ef4444;
+    --code-bg: #161514;
+    --code-text: #e8e6e1;
+    --code-inline: rgba(241, 241, 239, .12);
+    --toast-bg: #30302e;
+    --toast-text: #f1f1ef;
+    --shadow: 0 1px 3px rgba(0, 0, 0, .45);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6;
+    transition: background-color .25s ease, color .25s ease;
+  }
+  header, nav, .card, .side-panel, .stat, .doc-item, .mem-item, .cite-item, .msg .bubble,
+  .dep-badge, .badge, .preset button, .tool-item .tname, input, textarea, select, .toast {
+    transition: background-color .25s ease, color .25s ease, border-color .25s ease;
+  }
+  /* ── 顶栏 ── */
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
+  .logo-mark {
+    width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center;
+    background: var(--primary); color: #fff; font-weight: 800;
+  }
+  .logo-sub { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .api-box { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .api-box input {
+    width: 300px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 12px; font-family: Consolas, monospace; background: var(--bg); color: var(--text);
+  }
+  #themeBtn { padding: 6px 9px; display: inline-flex; align-items: center; }
+  #themeBtn .icon { width: 14px; height: 14px; }
+  /* 亮色时显示月亮（点击进暗色），暗色时显示太阳（点击回亮色） */
+  #themeBtn .icon-sun { display: none; }
+  #themeBtn .icon-moon { display: block; }
+  body.dark #themeBtn .icon-sun { display: block; }
+  body.dark #themeBtn .icon-moon { display: none; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .dot.ok { background: var(--ok); } .dot.err { background: var(--err); } .dot.warn { background: var(--warn); }
+  .deps { display: flex; gap: 6px; align-items: center; }
+  .dep-badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--muted);
+  }
+  .dep-badge.ok { color: var(--ok); border-color: rgba(61,154,95,.4); background: rgba(61,154,95,.08); }
+  .dep-badge.err { color: var(--err); border-color: rgba(192,57,43,.4); background: rgba(192,57,43,.08); }
+  /* ── Tab 导航 ── */
+  nav {
+    display: flex; gap: 2px; padding: 0 20px; background: var(--surface);
+    border-bottom: 1px solid var(--border); overflow-x: auto;
+  }
+  nav button {
+    border: none; background: none; padding: 10px 14px; cursor: pointer;
+    color: var(--muted); font-size: 13px; border-bottom: 2px solid transparent; white-space: nowrap;
+  }
+  nav button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+  main { padding: 16px 20px 40px; max-width: 1280px; margin: 0 auto; }
+  .tab { display: none; } .tab.active { display: block; }
+  /* ── 通用卡片 ── */
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 14px 16px; margin-bottom: 14px;
+  }
+  .card h3 { font-size: 14px; margin-bottom: 10px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+  .stat .num { font-size: 22px; font-weight: 700; color: var(--primary); }
+  .stat .label { font-size: 12px; color: var(--muted); }
+  .muted { color: var(--muted); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  .badge {
+    display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
+  }
+  .badge.ok { color: var(--ok); border-color: rgba(61,154,95,.4); background: rgba(61,154,95,.08); }
+  .badge.err { color: var(--err); border-color: rgba(192,57,43,.4); background: rgba(192,57,43,.08); }
+  .badge.warn { color: var(--warn); border-color: rgba(201,138,45,.4); background: rgba(201,138,45,.08); }
+  .badge.primary { color: var(--primary); border-color: rgba(201,100,66,.4); background: rgba(201,100,66,.08); }
+  button.btn {
+    background: var(--primary); color: #fff; border: none; border-radius: 7px;
+    padding: 6px 16px; cursor: pointer; font-size: 13px;
+  }
+  button.btn:hover { background: var(--primary-dark); }
+  button.btn.ghost { background: none; color: var(--primary); border: 1px solid var(--primary); }
+  button.btn.ghost:hover { background: rgba(201,100,66,.08); }
+  button.btn:disabled { opacity: .5; cursor: not-allowed; }
+  input[type=text], input[type=number], select {
+    padding: 6px 10px; border: 1px solid var(--border); border-radius: 7px;
+    font-size: 13px; background: var(--bg); color: var(--text);
+  }
+  input:focus, select:focus { outline: none; border-color: var(--primary); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .empty { text-align: center; color: var(--muted); padding: 28px 0; font-size: 13px; }
+  /* ── 对话页 ── */
+  #chatLayout { display: grid; grid-template-columns: 1fr 360px; gap: 14px; align-items: start; }
+  #chatMessages { height: 560px; overflow-y: auto; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+  .msg { margin-bottom: 14px; display: flex; }
+  .msg .bubble {
+    max-width: 82%; padding: 10px 14px; border-radius: 12px; font-size: 13.5px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .msg.user { justify-content: flex-end; }
+  .msg.user .bubble { background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant .bubble { background: var(--surface-2); border-bottom-left-radius: 4px; }
+  .msg .meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .msg .bubble pre {
+    background: var(--code-bg); color: var(--code-text); padding: 8px 10px; border-radius: 7px;
+    overflow-x: auto; font-size: 12px; margin: 6px 0;
+  }
+  .msg .bubble code { background: var(--code-inline); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .msg .bubble pre code { background: none; padding: 0; }
+  .msg .bubble table { border-collapse: collapse; margin: 6px 0; }
+  .msg .bubble th, .msg .bubble td { border: 1px solid var(--border); padding: 4px 8px; font-size: 12px; }
+  .cite-chip {
+    display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 6px; cursor: pointer;
+    background: rgba(201,100,66,.12); color: var(--primary); margin: 0 1px; font-weight: 700;
+  }
+  .cite-chip:hover { background: rgba(201,100,66,.25); }
+  #chatInputRow { display: flex; gap: 8px; margin-top: 10px; }
+  #chatInput { flex: 1; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; resize: none; }
+  .preset { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .preset button {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--muted); cursor: pointer;
+  }
+  .preset button:hover { border-color: var(--primary); color: var(--primary); }
+  .side-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px; }
+  .side-panel h4 { font-size: 13px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .cite-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 12.5px; }
+  .cite-item .src { display: flex; gap: 6px; align-items: center; margin-top: 5px; font-size: 11px; color: var(--muted); }
+  .cite-item.hl { border-color: var(--primary); background: rgba(201,100,66,.06); }
+  .tool-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+  .tool-item:last-child { border-bottom: none; }
+  .tool-item .tname { font-family: Consolas, monospace; font-size: 12px; background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
+  .spinner {
+    width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary);
+    border-radius: 50%; animation: spin .8s linear infinite; display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* ── 图谱页 ── */
+  #graphSvg { width: 100%; height: 560px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+  #graphSvg .node { cursor: pointer; }
+  #graphSvg .node circle { fill: var(--primary); transition: all .15s; }
+  #graphSvg .node text { font-size: 11px; fill: var(--text); pointer-events: none; }
+  #graphSvg .edge { stroke: var(--border); stroke-width: 1.2; }
+  #graphSvg .edge.hl { stroke: var(--primary); stroke-width: 2; }
+  #graphSvg .node.hl circle { fill: var(--primary-dark); r: 13; }
+  /* ── 树形（Agent/Trace） ── */
+  .tree-node { margin-left: 18px; border-left: 1px solid var(--border); padding-left: 10px; }
+  .tree-item { padding: 4px 0; font-size: 12.5px; }
+  .tree-item .tag { font-family: Consolas, monospace; font-size: 11px; }
+  /* ── 工具治理 ── */
+  .domain-bar { height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; display: flex; margin: 8px 0; }
+  .domain-bar span { height: 100%; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 4px; }
+  /* ── 记忆 / 列表通用 ── */
+  .mem-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; }
+  .mem-item .foot { display: flex; gap: 10px; margin-top: 6px; font-size: 11px; color: var(--muted); align-items: center; }
+  .doc-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
+  .doc-item .info { flex: 1; min-width: 0; }
+  .doc-item .title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--toast-bg); color: var(--toast-text); padding: 8px 18px; border-radius: 8px; font-size: 13px;
+    opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 99;
+  }
+  .toast.show { opacity: .95; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar .spacer { flex: 1; }
+  .kv { display: flex; gap: 6px; font-size: 12.5px; }
+  .kv b { color: var(--muted); font-weight: 600; }
+  @media (max-width: 900px) {
+    #chatLayout { grid-template-columns: 1fr; }
+    .grid-2, .grid-4 { grid-template-columns: 1fr 1fr; }
+    .api-box input { width: 180px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <span class="logo-mark">K</span>
+    <span>KnowFlow <span class="logo-sub">企业知识库 Agent 平台 · 轻量演示</span></span>
+  </div>
+  <div class="api-box">
+    <span class="dot" id="connDot" title="后端连接状态"></span>
+    <span id="connText" class="muted">未连接</span>
+    <input id="apiBase" type="text" spellcheck="false" value="http://localhost:8000/api/v1">
+    <button class="btn ghost" id="themeBtn" title="切换到暗色">
+      <svg class="icon icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>
+      <svg class="icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+    </button>
+    <button class="btn ghost" id="connBtn">重连</button>
+  </div>
+  <div class="deps" id="depsBar"></div>
+</header>
+
+<nav id="tabNav">
+  <button data-tab="chat" class="active">对话</button>
+  <button data-tab="knowledge">知识库</button>
+  <button data-tab="graph">知识图谱</button>
+  <button data-tab="tools">工具治理</button>
+  <button data-tab="memory">记忆</button>
+  <button data-tab="obs">可观测</button>
+  <button data-tab="eval">评测</button>
+  <button data-tab="agents">Agent 编排</button>
+  <button data-tab="sessions">会话历史</button>
+</nav>
+
+<main>
+
+  <!-- ══ 对话 ══ -->
+  <section id="tab-chat" class="tab active">
+    <div id="chatLayout">
+      <div>
+        <div class="toolbar" style="margin-bottom:8px">
+          <button class="btn ghost" id="newChatBtn">新建会话</button>
+          <span class="badge" id="chatSessionBadge">新会话</span>
+          <span class="spacer"></span>
+          <span class="muted">多轮对话自动延续当前会话，记忆按用户隔离</span>
+        </div>
+        <div id="chatMessages">
+          <div class="empty">输入问题开始对话。支持 SSE 流式输出、检索引用、工具调用与多轮记忆。</div>
+        </div>
+        <div id="chatInputRow">
+          <textarea id="chatInput" rows="2" placeholder="向知识库提问…（Enter 发送，Shift+Enter 换行）"></textarea>
+          <button class="btn" id="chatSend">发送</button>
+          <button class="btn ghost" id="chatStop" style="display:none">停止</button>
+        </div>
+        <div class="preset" id="presetQs"></div>
+      </div>
+      <div>
+        <div class="side-panel">
+          <h4>检索片段 <span class="muted" id="citeCount"></span></h4>
+          <div id="citePanel"><div class="empty">发送问题后展示检索命中的知识片段</div></div>
+        </div>
+        <div class="side-panel">
+          <h4>工具调用 <span class="muted" id="toolCount"></span></h4>
+          <div id="toolPanel"><div class="empty">工具编排执行记录</div></div>
+        </div>
+        <div class="side-panel">
+          <h4>本轮统计</h4>
+          <div class="kv" id="chatStats"><span class="muted">暂无数据</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 知识库 ══ -->
+  <section id="tab-knowledge" class="tab">
+    <div class="card">
+      <h3>文档管理 <span class="muted" id="docTotal"></span></h3>
+      <div class="toolbar">
+        <button class="btn" id="uploadBtn">上传文档</button>
+        <input type="file" id="uploadInput" multiple accept=".pdf,.docx,.md,.txt" style="display:none">
+        <button class="btn ghost" id="refreshDocs">刷新列表</button>
+        <span class="muted">支持 pdf / docx / md / txt，上传后由 Worker 异步索引</span>
+      </div>
+      <div id="docList"><div class="empty">加载中…</div></div>
+    </div>
+    <div class="card">
+      <h3>检索测试 <span class="muted">GraphRAG 混合检索（向量 + BM25 → RRF → 一跳扩展 → 精排）</span></h3>
+      <div class="row">
+        <input type="text" id="searchBox" style="flex:1" placeholder="输入查询，如：张三负责什么项目">
+        <select id="searchTopK"><option>5</option><option selected>10</option><option>20</option></select>
+        <button class="btn" id="searchBtn">检索</button>
+      </div>
+      <div id="searchResult"></div>
+    </div>
+  </section>
+
+  <!-- ══ 知识图谱 ══ -->
+  <section id="tab-graph" class="tab">
+    <div class="card">
+      <div class="toolbar">
+        <h3 style="margin:0">知识图谱 <span class="muted" id="graphMeta"></span></h3>
+        <span class="spacer"></span>
+        <span class="muted">实体</span>
+        <select id="graphLimit"><option>100</option><option selected>200</option><option>500</option></select>
+        <button class="btn ghost" id="graphRefresh">加载</button>
+      </div>
+      <div class="legend" id="graphLegend"></div>
+      <svg id="graphSvg" viewBox="0 0 1000 560"></svg>
+    </div>
+  </section>
+
+  <!-- ══ 工具治理 ══ -->
+  <section id="tab-tools" class="tab">
+    <div class="grid-4" id="toolStats"></div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>执行域分布</h3>
+        <div id="domainBreakdown"></div>
+      </div>
+      <div class="card">
+        <h3>Skill 管理 <span class="muted">YAML frontmatter 声明式注册 · 启停即时生效</span></h3>
+        <div id="skillList"><div class="empty">加载中…</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>逐工具调用指标 <span class="muted" id="toolMetricHint"></span></h3>
+      <div id="toolMetricTable"></div>
+    </div>
+  </section>
+
+  <!-- ══ 记忆 ══ -->
+  <section id="tab-memory" class="tab">
+    <div class="card">
+      <h3>长期记忆 <span class="muted">短期 Redis → 重要性打分 → LLM 压缩 → 长期存储（PG + 向量召回）</span></h3>
+      <div class="toolbar">
+        <input type="text" id="memoryUser" value="demo" style="width:120px" title="用户标识">
+        <button class="btn ghost" id="refreshMemory">刷新</button>
+        <span class="spacer"></span>
+        <span class="muted">沉淀需要会话号：</span>
+        <input type="text" id="sedimentSession" style="width:80px" placeholder="session_id">
+        <button class="btn" id="sedimentBtn">手动沉淀</button>
+      </div>
+      <div id="memoryList"><div class="empty">加载中…</div></div>
+    </div>
+  </section>
+
+  <!-- ══ 可观测 ══ -->
+  <section id="tab-obs" class="tab">
+    <div class="grid-4" id="obsStats"></div>
+    <div class="card">
+      <div class="toolbar">
+        <h3 style="margin:0">Trace 树 <span class="muted">span 覆盖检索 / 工具调用 / 记忆召回 / 编排全链路</span></h3>
+        <span class="spacer"></span>
+        <input type="text" id="traceSession" style="width:100px" placeholder="session_id">
+        <button class="btn ghost" id="traceBtn">查询</button>
+      </div>
+      <div id="traceTree"><div class="empty">输入会话 id 查询嵌套 span 树</div></div>
+    </div>
+  </section>
+
+  <!-- ══ 评测 ══ -->
+  <section id="tab-eval" class="tab">
+    <div class="card">
+      <h3>离线评测 <span class="muted">静态模式：Fake 组件 + 真实评测流程，结果可复现</span></h3>
+      <div class="toolbar">
+        <select id="evalDataset">
+          <option value="retrieval_eval">retrieval_eval（Recall@10 / MRR）</option>
+          <option value="knowledge_qa_eval">knowledge_qa_eval（要点命中率）</option>
+        </select>
+        <button class="btn" id="evalBtn">触发评测</button>
+        <span class="muted" id="evalHint"></span>
+      </div>
+      <div id="evalResult"></div>
+    </div>
+  </section>
+
+  <!-- ══ Agent 编排 ══ -->
+  <section id="tab-agents" class="tab">
+    <div class="card">
+      <div class="toolbar">
+        <h3 style="margin:0">Agent 运行状态 <span class="muted">LangGraph 状态机 · 父子 run · 委派链</span></h3>
+        <span class="spacer"></span>
+        <input type="text" id="agentRunInput" style="width:100px" placeholder="run_id">
+        <button class="btn ghost" id="agentBtn">查询</button>
+      </div>
+      <div id="agentTree"><div class="empty">输入 run_id 查看父子运行记录与任务委派链</div></div>
+    </div>
+  </section>
+
+  <!-- ══ 会话历史 ══ -->
+  <section id="tab-sessions" class="tab">
+    <div class="grid-2">
+      <div class="card">
+        <h3>会话列表</h3>
+        <div id="sessionList"><div class="empty">加载中…</div></div>
+      </div>
+      <div class="card">
+        <h3>会话消息</h3>
+        <div id="sessionMessages"><div class="empty">选择左侧会话查看消息</div></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+<script src="demo.js"></script>
+</body>
+</html>
