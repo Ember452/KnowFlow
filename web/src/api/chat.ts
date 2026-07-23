@@ -1,4 +1,4 @@
-import { request, streamSSE } from './client';
+import { request, streamSSE, getAuthHeaders } from './client';
 import type {
   ApiResponse,
   ChatRequest,
@@ -25,8 +25,9 @@ export const chatApi = {
 
   /** 列出当前用户的历史会话（按 id 倒序） */
   listSessions: async (userId: string) => {
+    // 后端经 X-User-Id 头解析用户标识，query 参数不生效
     const r = await request<ApiResponse<PageData<SessionItem>>>('/chat/sessions', {
-      query: { user_id: userId },
+      headers: getAuthHeaders(userId),
     });
     return r.data;
   },

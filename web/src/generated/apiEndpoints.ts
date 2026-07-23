@@ -23,6 +23,16 @@ export const API_ENDPOINTS: ApiEndpoint[] = [
     "desc": "Chat"
   },
   {
+    "method": "GET",
+    "path": "/api/v1/chat/sessions",
+    "desc": "List Sessions"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/chat/sessions/{session_id}/messages",
+    "desc": "List Messages"
+  },
+  {
     "method": "POST",
     "path": "/api/v1/chat/stream",
     "desc": "Chat Stream"
@@ -63,6 +73,11 @@ export const API_ENDPOINTS: ApiEndpoint[] = [
     "desc": "Healthz"
   },
   {
+    "method": "GET",
+    "path": "/api/v1/knowledge/graph",
+    "desc": "Get Graph"
+  },
+  {
     "method": "POST",
     "path": "/api/v1/knowledge/search",
     "desc": "Search"
@@ -96,6 +111,11 @@ export const API_ENDPOINTS: ApiEndpoint[] = [
     "method": "PUT",
     "path": "/api/v1/skills/{name}/toggle",
     "desc": "Toggle Skill"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/tools/stats",
+    "desc": "Tool Stats"
   },
   {
     "method": "GET",

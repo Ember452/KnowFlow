@@ -1,4 +1,5 @@
-import { Card, Table, Button, Typography, Tag, Progress, Popconfirm, message, Alert, Row, Col, Statistic } from 'antd';
+import { useState } from 'react';
+import { Card, Table, Button, Typography, Tag, Progress, Popconfirm, message, Alert, Row, Col, Statistic, Space, InputNumber } from 'antd';
 import { ReloadOutlined, DeleteOutlined, ThunderboltOutlined, DatabaseOutlined, FireOutlined } from '@ant-design/icons';
 import PageHeader from '@/components/PageHeader';
 import EmptyState from '@/components/EmptyState';
@@ -14,10 +15,12 @@ export default function Memory() {
   const [msgApi, ctx] = message.useMessage();
   const userId = useAppStore((s) => s.userId);
   const memories = useAsync(() => memoryApi.list(userId), [userId]);
+  // 沉淀目标会话: 该会话的短期记忆将被筛选压缩写入长期记忆
+  const [sessionId, setSessionId] = useState(1);
 
   const handleSediment = async () => {
     try {
-      const r = await memoryApi.sediment(userId);
+      const r = await memoryApi.sediment(userId, sessionId);
       msgApi.success(r.message);
       memories.reload();
     } catch (e) {
@@ -46,9 +49,19 @@ export default function Memory() {
         title="记忆"
         subtitle={`长期记忆管理 · 当前用户 ${userId} · 跨会话语义召回 + LLM 压缩`}
         extra={
-          <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleSediment} loading={memories.loading}>
-            触发记忆沉淀
-          </Button>
+          <Space wrap>
+            <InputNumber
+              min={1}
+              value={sessionId}
+              onChange={(v) => setSessionId(v ?? 1)}
+              addonBefore="会话 ID"
+              style={{ width: 170 }}
+              title="指定要沉淀的会话短期记忆"
+            />
+            <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleSediment} loading={memories.loading}>
+              触发记忆沉淀
+            </Button>
+          </Space>
         }
       />
 
