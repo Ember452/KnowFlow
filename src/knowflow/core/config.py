@@ -1,6 +1,7 @@
 """应用配置 - 基于 pydantic-settings, 环境变量前缀 KNOWFLOW_."""
 
 from functools import lru_cache
+from typing import Any
 
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -94,6 +95,10 @@ class Settings(BaseSettings):
     # ── 工具治理 ──
     skills_dir: str = "skills"  # Skill 声明式定义目录(SKILL.md)
     max_tool_rounds: int = 5  # 工具调用最大轮数
+    # MCP Server 接入列表, 每项: {"id": "demo", "command": "python",
+    # "args": ["-m", "knowflow.tools.mcp.servers.demo"], "domain": "skill_only"}
+    # 启动时经 register_mcp_server 注册进工具注册表(单个不可用降级, 不阻塞启动)
+    mcp_servers: list[dict[str, Any]] = []
 
     # ── API 与上传 ──
     cors_origins: str = "*"  # 逗号分隔; dev 放开, prod 收紧

@@ -60,6 +60,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await _safe_init("redis", init_redis)
     await _safe_init("milvus", init_milvus)
     await _safe_init("minio", init_minio)
+    await _safe_init("mcp_tools", _init_mcp_tools)
 
     yield
 
@@ -79,6 +80,28 @@ async def _load_bm25() -> None:
     from knowflow.retrieval.bm25_store import init_bm25_store
 
     await init_bm25_store(get_session_factory())
+
+
+async def _init_mcp_tools() -> None:
+    """注册配置声明的 MCP Server 工具(单个不可用降级, 不阻塞其他注册)."""
+    from knowflow.api.deps import get_tool_registry
+    from knowflow.core.constants import ExecutionDomain
+    from knowflow.tools.mcp.register import register_mcp_server
+
+    settings = get_settings()
+    registry = get_tool_registry()
+    for cfg in settings.mcp_servers:
+        server_id = str(cfg.get("id", "")).strip()
+        command = str(cfg.get("command", "")).strip()
+        if not server_id or not command:
+            logger.warning("mcp.config_skip", cfg=cfg)
+            continue
+        try:
+            domain = ExecutionDomain(str(cfg.get("domain", "skill_only")))
+        except ValueError:
+            domain = ExecutionDomain.SKILL_ONLY
+        args = [str(a) for a in cfg.get("args", [])]
+        await register_mcp_server(registry, server_id, command, args, domain=domain)
 
 
 def _dispose_ai_singletons() -> None:
