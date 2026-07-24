@@ -1679,3 +1679,138 @@ $env:GIT_COMMITTER_DATE = "2026-07-03T15:00:00+08:00"
 git add docs/commit-log.md
 git commit -m "docs: 更新提交日志"
 ```
+
+---
+
+### 110. feat(api): 新增工具治理统计端点
+
+- **提交时间**：2026-07-15 10:00
+- **说明**：新增 GET /tools/stats 治理面板数据（工具总量/可见工具数/注入 Schema Token/FC 准确率/执行域分布/逐工具调用指标），数据来自 Skill 可见性静态计算 + orchestrator 运行时 ToolMetrics。
+- **变更文件**：`src/knowflow/api/v1/endpoints/tools.py`、`src/knowflow/schemas/tool.py`、`src/knowflow/api/v1/router.py`、`tests/unit/api/test_tools_endpoint.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-15T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-15T10:00:00+08:00"
+git add src/knowflow/api/v1/endpoints/tools.py src/knowflow/schemas/tool.py src/knowflow/api/v1/router.py tests/unit/api/test_tools_endpoint.py
+git commit -m "feat(api): 新增工具治理统计端点"
+```
+
+---
+
+### 111. feat(retrieval): 新增多轮查询改写与文档级引用
+
+- **提交时间**：2026-07-16 10:00
+- **说明**：新增 QueryRewriter（多轮对话指代消解，仅在有历史时调用 LLM，失败回退原 query）；检索结果携带文档出处 doc_id/doc_title（DocumentRepo.get_many_titles 批量取标题），引用与知识库检索前端展示文档来源；补齐引用/改写/标题查询单测。
+- **变更文件**：`src/knowflow/retrieval/query_rewriter.py`、`src/knowflow/retrieval/retriever.py`、`src/knowflow/db/repositories/document_repo.py`、`src/knowflow/api/v1/endpoints/knowledge.py`、`src/knowflow/schemas/chat.py`、`src/knowflow/schemas/knowledge.py`、`tests/fakes.py`、`tests/unit/retrieval/test_query_rewriter.py`、`tests/unit/retrieval/test_retriever.py`、`tests/unit/db/test_document_repo.py`、`web/src/types/index.ts`、`web/src/api/documents.ts`、`web/src/pages/Knowledge.tsx`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-16T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-16T10:00:00+08:00"
+git add src/knowflow/retrieval/query_rewriter.py src/knowflow/retrieval/retriever.py src/knowflow/db/repositories/document_repo.py src/knowflow/api/v1/endpoints/knowledge.py src/knowflow/schemas/chat.py src/knowflow/schemas/knowledge.py tests/fakes.py tests/unit/retrieval/test_query_rewriter.py tests/unit/retrieval/test_retriever.py tests/unit/db/test_document_repo.py web/src/types/index.ts web/src/api/documents.ts web/src/pages/Knowledge.tsx
+git commit -m "feat(retrieval): 新增多轮查询改写与文档级引用"
+```
+
+---
+
+### 112. feat(agents): Multi-Agent 与工具编排支持流式输出
+
+- **提交时间**：2026-07-17 10:00
+- **说明**：MainAgent.summarize/direct_answer 与 MultiAgentOrchestrator 增加 on_token 逐段回调；ToolOrchestrator 支持 astream 流式收集与 on_tool 工具事件回调（每次工具调用完成后通知调用方），并暴露 metrics 属性供治理统计读取。
+- **变更文件**：`src/knowflow/agents/main_agent.py`、`src/knowflow/agents/orchestrator.py`、`src/knowflow/services/tool_orchestrator.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-17T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-17T10:00:00+08:00"
+git add src/knowflow/agents/main_agent.py src/knowflow/agents/orchestrator.py src/knowflow/services/tool_orchestrator.py
+git commit -m "feat(agents): Multi-Agent 与工具编排支持流式输出"
+```
+
+---
+
+### 113. feat(chat): 对话链路接入查询改写与流式事件
+
+- **提交时间**：2026-07-18 10:00
+- **说明**：ChatService 接入 QueryRewriter（多轮对话检索前改写 query）；SSE 链路经 asyncio 队列桥接编排器，流式回传 token/progress/tool_start/tool_end 事件（fake/非流式回退整段补发）；检索上下文为空时允许模型知识兜底并注明；引用携带文档出处。
+- **变更文件**：`src/knowflow/api/v1/endpoints/chat.py`、`src/knowflow/services/chat_service.py`、`tests/unit/services/test_chat_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-18T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-18T10:00:00+08:00"
+git add src/knowflow/api/v1/endpoints/chat.py src/knowflow/services/chat_service.py tests/unit/services/test_chat_service.py
+git commit -m "feat(chat): 对话链路接入查询改写与流式事件"
+```
+
+---
+
+### 114. feat(retrieval): 索引批量 embedding 与实体抽取超时防护
+
+- **提交时间**：2026-07-19 10:00
+- **说明**：索引管线 embedding 改为一次性批量推理（替换逐块 embed_one），token 计数改用 TokenCounter；实体抽取 ChatOpenAI 配置 30s 超时、异常捕获放宽为 Exception 走重试降级（不再无限挂起），同步 LLM 调用移入线程池避免阻塞 worker 事件循环；DashScope embeddings 关闭 tiktoken 长度检查兼容 400 问题。
+- **变更文件**：`src/knowflow/retrieval/pipeline.py`、`src/knowflow/retrieval/entity_extractor.py`、`src/knowflow/retrieval/embedding.py`、`tests/unit/retrieval/test_pipeline.py`、`tests/unit/retrieval/test_entity_extractor.py`、`tests/integration/test_index_pipeline.py`、`tests/unit/tasks/test_index_task.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-19T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-19T10:00:00+08:00"
+git add src/knowflow/retrieval/pipeline.py src/knowflow/retrieval/entity_extractor.py src/knowflow/retrieval/embedding.py tests/unit/retrieval/test_pipeline.py tests/unit/retrieval/test_entity_extractor.py tests/integration/test_index_pipeline.py tests/unit/tasks/test_index_task.py
+git commit -m "feat(retrieval): 索引批量 embedding 与实体抽取超时防护"
+```
+
+---
+
+### 115. fix(core): Redis socket 超时与 BM25/Milvus 启动初始化
+
+- **提交时间**：2026-07-20 10:00
+- **说明**：Redis 客户端配置 socket_timeout（须大于 XREADGROUP 阻塞时长，避免误杀消费）；BM25Store 提供 init_bm25_store 启动全量加载（API/Worker 各持同源索引，重启恢复一致）；Worker 消费前显式初始化 Milvus（VectorStore 构造取单例非懒加载）并注册 dispose。
+- **变更文件**：`src/knowflow/core/config.py`、`src/knowflow/db/redis.py`、`src/knowflow/retrieval/bm25_store.py`、`src/knowflow/core/lifecycle.py`、`src/knowflow/tasks/index_task.py`、`worker/main.py`、`tests/unit/retrieval/test_bm25_store.py`、`tests/unit/worker/test_worker_main.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-20T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-20T10:00:00+08:00"
+git add src/knowflow/core/config.py src/knowflow/db/redis.py src/knowflow/retrieval/bm25_store.py src/knowflow/core/lifecycle.py src/knowflow/tasks/index_task.py worker/main.py tests/unit/retrieval/test_bm25_store.py tests/unit/worker/test_worker_main.py
+git commit -m "fix(core): Redis socket 超时与 BM25/Milvus 启动初始化"
+```
+
+---
+
+### 116. docs: 更新简历指标口径与 BM25 说明
+
+- **提交时间**：2026-07-21 10:00
+- **说明**：resume_writing.md 细化 MRR 指标口径（0.80→0.87 仅跨文档 20 条子集，总体 0.6592→0.6804，主动亮细粒度口径更可信）；ADR 0001 补充一跳扩展评测依据（多跳 PageRank 收益低）；两篇指标测试文档更新 BM25 跨进程说明。
+- **变更文件**：`docs/resume_writing.md`、`docs/adr/0001-graph-store-postgres.md`、`docs/tests/指标测试-API与异步索引.md`、`docs/tests/指标测试-对话链路.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-21T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-21T10:00:00+08:00"
+git add docs/resume_writing.md docs/adr/0001-graph-store-postgres.md "docs/tests/指标测试-API与异步索引.md" "docs/tests/指标测试-对话链路.md"
+git commit -m "docs: 更新简历指标口径与 BM25 说明"
+```
+
+---
+
+### 117. feat(scripts): 新增零依赖演示前端与迁移线程化
+
+- **提交时间**：2026-07-22 10:00
+- **说明**：新增 demo.html/demo.js 零依赖原生 JS 演示前端（覆盖 SSE 对话/检索/工具/图谱/治理/记忆/可观测/Agent/会话历史）；init_db.py 中 alembic 同步迁移调用以 asyncio.to_thread 包裹（异步入口内直接调用会阻塞事件循环）。
+- **变更文件**：`scripts/demo.html`、`scripts/demo.js`、`scripts/init_db.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-22T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-22T10:00:00+08:00"
+git add scripts/demo.html scripts/demo.js scripts/init_db.py
+git commit -m "feat(scripts): 新增零依赖演示前端与迁移线程化"
+```
+
+---
+
+### 118. feat(web): 会话历史与记忆沉淀接口适配
+
+- **提交时间**：2026-07-23 10:00
+- **说明**：前端会话列表改用 X-User-Id 头传用户标识（query 参数废弃）；记忆沉淀支持指定会话（sediment 请求体带 session_id）；apiEndpoints 声明会话历史/图谱/工具治理端点；记忆页新增会话 ID 输入。
+- **变更文件**：`web/src/api/chat.ts`、`web/src/api/memory.ts`、`web/src/generated/apiEndpoints.ts`、`web/src/pages/Memory.tsx`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-23T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-23T10:00:00+08:00"
+git add web/src/api/chat.ts web/src/api/memory.ts web/src/generated/apiEndpoints.ts web/src/pages/Memory.tsx
+git commit -m "feat(web): 会话历史与记忆沉淀接口适配"
+```
