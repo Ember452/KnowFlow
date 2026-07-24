@@ -35,8 +35,13 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 def _build_memory_manager(db: Any, redis: Any, llm: Any, embedding: Any) -> Any:
-    """装配记忆管理器: 短期(Redis) + 重要性/压缩(LLM) + 长期(PG+向量)."""
+    """装配记忆管理器: 短期(Redis) + 重要性/压缩(LLM) + 长期(PG+向量).
+
+    治理能力: 冲突检测留痕(ConflictStore 落 memory_conflicts 表),
+    蒸馏摘要(压缩结果沉淀 memory_summaries 供召回注入).
+    """
     from knowflow.memory.compressor import Compressor
+    from knowflow.memory.conflict import ConflictStore
     from knowflow.memory.importance import ImportanceScorer
     from knowflow.memory.long_term import LongTermMemoryManager
     from knowflow.memory.manager import MemoryManager
@@ -47,6 +52,7 @@ def _build_memory_manager(db: Any, redis: Any, llm: Any, embedding: Any) -> Any:
         importance=ImportanceScorer(llm),
         compressor=Compressor(llm),
         long_term=LongTermMemoryManager(db, embedding_client=embedding),
+        conflict_store=ConflictStore(db),
     )
 
 

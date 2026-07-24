@@ -4,13 +4,14 @@ import asyncio
 from difflib import SequenceMatcher
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowflow.core.config import Settings, get_settings
 from knowflow.core.logging import get_logger
 from knowflow.memory.recall import LongTermRecaller, MemoryHit, cosine_similarity
 from knowflow.memory.store import LongTermStore, deserialize_embedding
-from knowflow.models.memory import LongTermMemory
+from knowflow.models.memory import LongTermMemory, MemorySummary
 
 logger = get_logger(__name__)
 
@@ -99,3 +100,37 @@ class LongTermMemoryManager:
     async def delete(self, memory_id: int) -> bool:
         """删除一条记忆; 不存在返回 False."""
         return await self._store.delete(memory_id)
+
+    # ── 记忆蒸馏(核心记忆): 会话摘要沉淀与召回注入 ──
+
+    async def save_summary(self, user_id: str, session_id: int, summary: str) -> int:
+        """沉淀会话级记忆摘要(蒸馏产物), 返回摘要 id.
+
+        同一会话重复沉淀时覆盖旧摘要, 避免摘要膨胀(保留最新浓缩结果).
+        """
+        if not summary:
+            return 0
+        existing = await self._store.session.scalar(
+            select(MemorySummary).where(
+                MemorySummary.user_id == user_id,
+                MemorySummary.session_id == session_id,
+            )
+        )
+        if existing is not None:
+            existing.summary = summary
+            await self._store.session.flush()
+            return int(existing.id)
+        entry = MemorySummary(user_id=user_id, session_id=session_id, summary=summary)
+        self._store.session.add(entry)
+        await self._store.session.flush()
+        return int(entry.id)
+
+    async def latest_summary(self, user_id: str) -> str | None:
+        """取用户最近一次会话摘要(核心记忆注入用), 无摘要返回 None."""
+        entry = await self._store.session.scalar(
+            select(MemorySummary)
+            .where(MemorySummary.user_id == user_id)
+            .order_by(MemorySummary.updated_at.desc())
+            .limit(1)
+        )
+        return entry.summary if entry is not None else None

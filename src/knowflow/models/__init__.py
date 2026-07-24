@@ -5,7 +5,7 @@ from knowflow.models.base import Base, IDMixin, JSONBType, TimestampMixin, Vecto
 from knowflow.models.document import Chunk, Document, DocumentIndex
 from knowflow.models.eval import EvalDataset, EvalResult, EvalRun
 from knowflow.models.graph import Entity, EntityAlias, Relation
-from knowflow.models.memory import LongTermMemory, MemorySummary
+from knowflow.models.memory import LongTermMemory, MemoryConflict, MemorySummary
 from knowflow.models.session import Message, Session, Turn
 from knowflow.models.tool import SkillActivation, ToolCall, ToolMetric
 from knowflow.models.trace import TraceEvent, TraceSpan
@@ -24,6 +24,7 @@ __all__ = [
     "IDMixin",
     "JSONBType",
     "LongTermMemory",
+    "MemoryConflict",
     "MemorySummary",
     "Message",
     "Relation",

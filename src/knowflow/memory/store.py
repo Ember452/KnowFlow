@@ -49,6 +49,11 @@ class LongTermStore:
         self._session = session
         self._embedding = embedding_client
 
+    @property
+    def session(self) -> AsyncSession:
+        """底层 AsyncSession(蒸馏/冲突等跨模型操作复用)."""
+        return self._session
+
     async def save(
         self,
         *,
