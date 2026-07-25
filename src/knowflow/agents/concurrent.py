@@ -7,7 +7,7 @@
 import asyncio
 import time
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from knowflow.core.logging import get_logger
@@ -26,6 +26,7 @@ class SubtaskResult:
     latency_ms: float = 0.0
     checkpoint_id: str | None = None
     run_id: int | None = None
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)  # 子 Agent 工具调用记录
 
 
 async def run_concurrent(

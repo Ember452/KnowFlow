@@ -11,7 +11,7 @@ class AgentState(TypedDict, total=False):
     """多 Agent 编排状态机共享状态.
 
     - query: 用户原始问题
-    - intent: understand 节点规则分类(simple/complex)
+    - intent: understand 节点两级路由结果(simple 直连 / complex 强信号 / uncertain 交 LLM 判断)
     - messages: 主 Agent 对话消息(规划/汇总用)
     - needs_delegation: plan 节点判断是否需要委派子 Agent
     - plan: 规划结果 [{id, task, description}]

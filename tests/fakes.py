@@ -310,6 +310,10 @@ class FakeToolOrchestrator:
     no_tools: bool = False
     run_calls: list[dict[str, Any]] = field(default_factory=list)
 
+    def visible_tools_text(self, agent_role: Any = None) -> str:
+        """返回固定工具清单文本(子 Agent prompt 注入用)."""
+        return "calculator(安全数学表达式求值); file_write_tool(写出文件)"
+
     async def run(
         self,
         query: str,
@@ -320,6 +324,7 @@ class FakeToolOrchestrator:
         active_skills: list[Any] | None = None,
         on_token: Any = None,
         on_tool: Any = None,
+        system_prompt: str | None = None,
     ) -> Any:
         from knowflow.services.tool_orchestrator import OrchestratorResult
 
@@ -327,10 +332,16 @@ class FakeToolOrchestrator:
             {
                 "query": query,
                 "session_id": session_id,
+                "agent_role": agent_role,
                 "history": history,
                 "context": context,
+                "system_prompt": system_prompt,
             }
         )
+        # 模拟真实编排器行为: 每个工具调用记录经 on_tool 上抛
+        for record in self.tool_calls:
+            if on_tool is not None:
+                await on_tool(record)
         return OrchestratorResult(
             answer=self.answer, tool_calls=list(self.tool_calls), no_tools=self.no_tools
         )
@@ -342,12 +353,14 @@ class FakeMultiAgentOrchestrator:
 
     用于 ChatService 多 Agent 链路单测. intent="simple" 时 answer 为空
     (调用方回退直连链路), 与真实编排器信号约定一致.
+    注入 tool_records 时, run 会逐个经 on_tool 回调上抛(模拟子 Agent 工具调用).
     """
 
     answer: str = "这是多 Agent 编排的回复。"
     intent: str = "complex"
     delegated: bool = True
     subtasks: list[Any] = field(default_factory=list)
+    tool_records: list[Any] = field(default_factory=list)
     raise_failure: bool = False
     run_calls: list[dict[str, Any]] = field(default_factory=list)
 
@@ -359,6 +372,7 @@ class FakeMultiAgentOrchestrator:
         history: list[dict[str, str]] | None = None,
         on_token: Any = None,
         on_progress: Any = None,
+        on_tool: Any = None,
     ) -> Any:
         from knowflow.agents.orchestrator import MultiAgentResult
 
@@ -367,6 +381,9 @@ class FakeMultiAgentOrchestrator:
         )
         if self.raise_failure:
             raise RuntimeError("checkpoint PG 不可用")
+        for record in self.tool_records:
+            if on_tool is not None:
+                await on_tool(record)
         return MultiAgentResult(
             run_id=1,
             delegated=self.delegated,
@@ -433,6 +450,7 @@ class FakeMemoryManager:
     observed: list[tuple[Any, str, str]] = field(default_factory=list)
     sediment_calls: list[tuple[Any, str]] = field(default_factory=list)
     recall_calls: list[tuple[str, str]] = field(default_factory=list)
+    summary_text: str | None = "用户近期关注报销流程"  # 非 None 时 latest_summary 返回
 
     async def observe(self, session_id: Any, role: str, content: str) -> None:
         self.observed.append((session_id, role, content))
@@ -447,3 +465,6 @@ class FakeMemoryManager:
 
     def recall_text(self, hits: list[Any]) -> str:
         return self.recalled_text if hits else ""
+
+    async def latest_summary(self, user_id: str) -> str | None:
+        return self.summary_text

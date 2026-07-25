@@ -18,12 +18,22 @@ from knowflow.agents.checkpoint import CheckpointManager
 from knowflow.agents.concurrent import SubtaskResult, run_concurrent
 from knowflow.agents.delegation import TaskDelegationFactory
 from knowflow.agents.main_agent import MainAgent, PlanResult
-from knowflow.agents.subagent import Subagent
+from knowflow.agents.subagent import Subagent, quality_check
 from knowflow.core.config import Settings, get_settings
 from knowflow.core.logging import get_logger
 from knowflow.db.repositories.agent_repo import AgentRunRepo, TaskDelegationRepo
+from knowflow.tools.domain import AgentRole
 
 logger = get_logger(__name__)
+
+# 子任务执行最大尝试次数(1 次初始 + 1 次失败/质量门禁重试)
+_MAX_SUBTASK_ATTEMPTS = 2
+
+
+def _format_context(chunks: list[Any]) -> str:
+    """检索片段格式化为上下文文本([n] 标注), 与 chat_service 口径一致."""
+    context_lines = [f"[{i + 1}] {c.content}" for i, c in enumerate(chunks)]
+    return "\n\n".join(context_lines) if context_lines else "(知识库未检索到相关内容)"
 
 
 @dataclass
@@ -38,6 +48,7 @@ class SubtaskInfo:
     run_id: int | None = None
     checkpoint_id: str | None = None
     latency_ms: float = 0.0
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -63,6 +74,8 @@ class MultiAgentOrchestrator:
         session_factory: Any | None = None,
         checkpoints: CheckpointManager | None = None,
         context_manager: Any | None = None,
+        retriever: Any | None = None,
+        tool_orchestrator: Any | None = None,
     ) -> None:
         """初始化.
 
@@ -72,15 +85,27 @@ class MultiAgentOrchestrator:
             session_factory: AsyncSession factory(落库 agent_runs/delegations).
             checkpoints: CheckpointManager; None 时新建(生产懒加载 PG).
             context_manager: 子 Agent 独立 ContextManager 实例(可 None).
+            retriever: 子任务按需检索器(实现 async retrieve); None 时子任务
+                回退共享预检索上下文(兼容无检索能力场景).
+            tool_orchestrator: ToolOrchestrator; 注入后子 Agent 以 SUBAGENT 角色
+                跑工具循环(subagent_only 域工具可见), None 时纯 LLM 执行(降级).
         """
         self._settings = settings or get_settings()
         self._session_factory: Any = session_factory
         self._checkpoints = checkpoints or CheckpointManager()
         self._main_agent = MainAgent(llm, self._settings)
-        self._subagent = Subagent(llm, self._settings, context_manager=context_manager)
+        self._subagent = Subagent(
+            llm,
+            self._settings,
+            context_manager=context_manager,
+            tool_orchestrator=tool_orchestrator,
+        )
+        self._retriever = retriever
+        self._tool_orchestrator = tool_orchestrator
         self._graph: Any = None
         self._on_token: Callable[[str], Awaitable[None]] | None = None  # 流式回调(经实例透传)
         self._on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+        self._on_tool: Callable[[Any], Awaitable[None]] | None = None  # 子任务工具回调(经实例透传)
 
     # ── 对外入口 ──
 
@@ -92,6 +117,7 @@ class MultiAgentOrchestrator:
         history: list[dict[str, str]] | None = None,
         on_token: Callable[[str], Awaitable[None]] | None = None,
         on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        on_tool: Callable[[Any], Awaitable[None]] | None = None,
     ) -> MultiAgentResult:
         """编排入口.
 
@@ -104,6 +130,8 @@ class MultiAgentOrchestrator:
                 None 时一次性返回.
             on_progress: 可选回调, 汇总开始前通知编排进度(delegated/subtasks/run_id),
                 供调用方先发 progress 事件再收 token 流.
+            on_tool: 可选回调, 子 Agent 工具调用完成后通知调用方(SSE 展示用),
+                记录携带 subtask_id 标注来源.
 
         Returns:
             MultiAgentResult. intent=simple 时 answer 为空(调用方走直连检索链路);
@@ -113,6 +141,7 @@ class MultiAgentOrchestrator:
         # 经实例属性透传给 graph 节点(summarize_node 签名固定, 无法传参)
         self._on_token = on_token
         self._on_progress = on_progress
+        self._on_tool = on_tool
         intent = self._main_agent.understand(query)
         if intent == "simple":
             return MultiAgentResult(
@@ -172,6 +201,7 @@ class MultiAgentOrchestrator:
                     run_id=info.get("run_id"),
                     checkpoint_id=info.get("checkpoint_id"),
                     latency_ms=info.get("latency_ms", 0.0),
+                    tool_calls=info.get("tool_calls", []),
                 )
             )
         return MultiAgentResult(
@@ -191,9 +221,11 @@ class MultiAgentOrchestrator:
         return {"intent": self._main_agent.understand(state.get("query", ""))}
 
     async def plan_node(self, state: dict[str, Any]) -> dict[str, Any]:
-        """plan 节点: LLM 任务规划(complex 才调 LLM)."""
-        if state.get("intent") == "complex":
-            plan: PlanResult = await self._main_agent.plan(state.get("query", ""))
+        """plan 节点: LLM 任务规划(complex/uncertain 才调 LLM)."""
+        if state.get("intent") in ("complex", "uncertain"):
+            plan: PlanResult = await self._main_agent.plan(
+                state.get("query", ""), available_tools=self._subagent_tools_text()
+            )
         else:
             plan = PlanResult(needs_delegation=False, reason="简单任务无需委派")
         return {"needs_delegation": plan.needs_delegation, "plan": plan.subtasks}
@@ -226,7 +258,7 @@ class MultiAgentOrchestrator:
 
         # 2. 并发执行(无 DB 操作, 各协程独立)
         runners = {
-            str(sub["id"]): self._run_subtask(sub, sub_run_id, context)
+            str(sub["id"]): self._run_subtask(sub, sub_run_id, context, session_id)
             for sub, sub_run_id, _ in delegations
         }
         infos = await run_concurrent(runners, timeout=self._settings.agent_timeout_seconds)
@@ -283,16 +315,93 @@ class MultiAgentOrchestrator:
     # ── 内部 ──
 
     async def _run_subtask(
-        self, sub: dict[str, Any], sub_run_id: int, context: str
+        self, sub: dict[str, Any], sub_run_id: int, context: str, session_id: int
     ) -> SubtaskResult:
-        """单个子任务执行: 子 Agent 独立上下文 → 结果."""
-        result = await self._subagent.execute(sub["task"], context)
+        """单个子任务执行: 按需检索 → 子 Agent 独立上下文 → 失败/质量门禁重试.
+
+        每次尝试携带上次失败原因/质量门禁原因(retry_hint)重试, 最多
+        _MAX_SUBTASK_ATTEMPTS 次; 仍失败返回 success=False(降级不阻塞整体).
+        注入 tool_orchestrator 时子 Agent 可调用工具, 调用记录经 on_tool 上抛
+        (标注 subtask_id)并随结果返回.
+        """
+        task = sub["task"]
+        sub_context = await self._retrieve_for_subtask(task, context)
+        # 子任务工具回调: 标注来源子任务后上抛(SSE 展示区分多个子 Agent)
+        on_tool = self._on_tool
+
+        async def _sub_tool_cb(record: Any) -> None:
+            record.subtask_id = sub["id"]
+            if on_tool is not None:
+                await on_tool(record)
+
+        last_hint: str | None = None
+        last_error = ""
+        for attempt in range(1, _MAX_SUBTASK_ATTEMPTS + 1):
+            try:
+                result = await self._subagent.execute(
+                    task,
+                    sub_context,
+                    session_id=session_id,
+                    retry_hint=last_hint,
+                    on_tool=_sub_tool_cb,
+                )
+                output = result.get("output", "")
+                ok, reason = quality_check(output)
+                if ok:
+                    return SubtaskResult(
+                        subtask_id=sub["id"],
+                        success=True,
+                        output=output,
+                        run_id=sub_run_id,
+                        tool_calls=result.get("tool_calls", []),
+                    )
+                last_error = reason
+                last_hint = f"上次执行未产出有效结果: {reason}"
+                logger.warning(
+                    "subtask.retry_quality",
+                    subtask_id=sub["id"],
+                    attempt=attempt,
+                    reason=reason,
+                )
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                last_hint = f"上次执行失败: {last_error}"
+                logger.warning(
+                    "subtask.retry_failed",
+                    subtask_id=sub["id"],
+                    attempt=attempt,
+                    error=last_error,
+                )
         return SubtaskResult(
             subtask_id=sub["id"],
-            success=True,
-            output=result.get("output", ""),
+            success=False,
+            error=f"执行 {_MAX_SUBTASK_ATTEMPTS} 次未成功: {last_error}",
             run_id=sub_run_id,
         )
+
+    async def _retrieve_for_subtask(self, task: str, fallback_context: str) -> str:
+        """子任务按需检索: 用子任务文本检索知识库, 失败/无结果回退共享上下文.
+
+        避免所有子任务共享同一份预检索上下文(跨主题子任务会互相串扰),
+        如"对比 A 和 B"场景各子任务只看到自己主题的检索结果.
+        """
+        if self._retriever is None:
+            return fallback_context
+        try:
+            result = await self._retriever.retrieve(task, top_k=self._settings.retrieval_top_k)
+        except Exception as exc:
+            logger.warning("subtask.retrieve_failed_fallback", error=str(exc))
+            return fallback_context
+        if not result.chunks:
+            logger.info("subtask.retrieve_empty_fallback", task=task[:80])
+            return fallback_context
+        return _format_context(result.chunks)
+
+    def _subagent_tools_text(self) -> str:
+        """子 Agent 可用工具清单文本(供规划 prompt 判断任务可行性)."""
+        if self._tool_orchestrator is None:
+            return "(子 Agent 无工具, 仅基于检索上下文回答)"
+        return str(self._tool_orchestrator.visible_tools_text(AgentRole.SUBAGENT))
 
     async def _get_graph(self) -> Any:
         """惰性编译 LangGraph 状态机(挂 checkpoint saver, 仅编译一次)."""

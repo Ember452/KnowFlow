@@ -31,14 +31,17 @@ class FakeLLM:
     [
         ("公司报销流程是什么?", "simple"),
         ("帮我算 2 的 10 次方", "simple"),
+        ("", "simple"),
         ("对比 A 和 B 两款产品的价格", "complex"),
         ("分别查询三款产品的参数并汇总", "complex"),
         ("A/B/C 三个方案优缺点", "complex"),
-        ("", "simple"),
+        ("同时查询 A 和 B 的库存", "complex"),
+        ("知识库有哪些内容", "uncertain"),  # 弱信号词, 交 LLM 判断
+        ("A 和 B 哪个更好", "uncertain"),  # 单个并列连词, 交 LLM 判断
     ],
 )
 def test_understand_classification(query: str, expected: str) -> None:
-    """复杂信号词/多候选分隔符判 complex, 否则 simple."""
+    """两级意图路由: 强信号词/多分隔符判 complex, 弱信号/单分隔符判 uncertain, 否则 simple."""
     assert MainAgent.understand(query) == expected
 
 
@@ -202,3 +205,30 @@ async def test_decide_simple_no_llm_plan() -> None:
     assert decided["needs_delegation"] is False
     assert decided["intent"] == "simple"
     assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_decide_uncertain_calls_llm_plan() -> None:
+    """uncertain 任务(弱信号词)交 LLM 规划兜底: LLM 可判定不委派."""
+    llm = FakeLLM(['{"needs_delegation": false, "reason": "无法拆解", "subtasks": []}'])
+    agent = MainAgent(llm=llm)
+    decided = await agent.decide({"query": "知识库有哪些内容"})
+    assert decided["intent"] == "uncertain"
+    assert decided["needs_delegation"] is False
+    assert llm.calls  # 规则无法确定时调用 LLM 兜底
+
+
+@pytest.mark.asyncio
+async def test_decide_uncertain_llm_can_delegate() -> None:
+    """uncertain 任务经 LLM 判断可委派时正常拆解子任务."""
+    llm = FakeLLM(
+        [
+            '{"needs_delegation": true, "reason": "可拆分", '
+            '"subtasks": [{"id": "t1", "task": "查 A"}, {"id": "t2", "task": "查 B"}]}'
+        ]
+    )
+    agent = MainAgent(llm=llm)
+    decided = await agent.decide({"query": "A 和 B 哪个更好"})
+    assert decided["intent"] == "uncertain"
+    assert decided["needs_delegation"] is True
+    assert len(decided["plan"]) == 2

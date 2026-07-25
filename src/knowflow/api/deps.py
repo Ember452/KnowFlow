@@ -301,6 +301,11 @@ def get_multi_agent_orchestrator() -> Any:
             llm=get_chat_llm(),
             session_factory=get_session_factory(),
             checkpoints=CheckpointManager(),
+            # 子任务按需检索依赖 retriever; 不可用时编排器降级为共享上下文, 不阻塞
+            retriever=get_retriever(),
+            # 子 Agent 工具化: 复用工具编排器(SUBAGENT 角色可见 subagent_only 域);
+            # 不可用(None)时子 Agent 回退纯 LLM 执行
+            tool_orchestrator=get_tool_orchestrator(),
         )
         logger.info("deps.multi_agent_initialized")
     except Exception as exc:

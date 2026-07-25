@@ -103,6 +103,52 @@ async def test_no_tool_call_direct_answer() -> None:
     assert result.rounds == 0
 
 
+# ── 自定义 system prompt 与角色工具清单 ──
+
+
+async def test_system_prompt_override() -> None:
+    """传入 system_prompt 时优先使用, 不再拼接默认检索上下文."""
+    llm = FakeToolCallingLLM([_ScriptedResponse(content="子任务结果")])
+    orchestrator = ToolOrchestrator(
+        registry=_build_registry(),
+        skill_manager=_empty_skill_manager(),
+        llm=llm,
+    )
+    result = await orchestrator.run("任务", system_prompt="你是子 Agent, 只围绕任务执行")
+    assert result.answer == "子任务结果"
+    system = str(llm.last_messages[0]["content"])
+    assert "你是子 Agent" in system
+    assert "检索上下文" not in system
+
+
+async def test_system_prompt_none_keeps_default_with_context() -> None:
+    """未传 system_prompt 时保持默认行为: context 注入 system prompt."""
+    llm = FakeToolCallingLLM([_ScriptedResponse(content="回答")])
+    orchestrator = ToolOrchestrator(
+        registry=_build_registry(),
+        skill_manager=_empty_skill_manager(),
+        llm=llm,
+    )
+    await orchestrator.run("任务", context="预检索资料")
+    system = str(llm.last_messages[0]["content"])
+    assert "预检索资料" in system
+
+
+async def test_visible_tools_text_by_role() -> None:
+    """visible_tools_text: 子 Agent 含 subagent_only 域, 主 Agent 不含."""
+    orchestrator = ToolOrchestrator(
+        registry=_build_registry(),
+        skill_manager=_empty_skill_manager(),
+        llm=FakeToolCallingLLM([]),
+    )
+    sub_text = orchestrator.visible_tools_text(AgentRole.SUBAGENT)
+    assert "calculator" in sub_text
+    assert "search_tool" in sub_text  # subagent_only 域对子 Agent 可见
+    main_text = orchestrator.visible_tools_text(AgentRole.MAIN)
+    assert "calculator" in main_text
+    assert "search_tool" not in main_text  # 主 Agent 不可见 subagent_only 工具
+
+
 # ── 越权调用被拦截 ──
 
 

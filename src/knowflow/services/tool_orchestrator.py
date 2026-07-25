@@ -49,6 +49,7 @@ class ToolCallRecord:
     output: Any
     latency_ms: float
     error: str | None = None
+    subtask_id: str | None = None  # 子 Agent 场景标注来源子任务(主链路为 None)
 
 
 @dataclass
@@ -88,6 +89,17 @@ class ToolOrchestrator:
         """工具调用指标收集器(供治理统计端点读取)."""
         return self._metrics
 
+    def visible_tools_text(self, agent_role: AgentRole = AgentRole.SUBAGENT) -> str:
+        """返回指定角色可见工具清单文本(供主 Agent 规划 prompt 注入).
+
+        子 Agent 执行前需知道可调用的工具集, 主 Agent 据此拆出"能被执行"的任务.
+        """
+        active = filter_skills_by_role(self._skills.active_skills(), agent_role)
+        visible = self._visibility.compute(active, agent_role, self._registry)
+        if not visible:
+            return "(无可用工具)"
+        return "; ".join(f"{t.name}({t.description})" for t in visible)
+
     async def run(
         self,
         query: str,
@@ -98,6 +110,7 @@ class ToolOrchestrator:
         active_skills: list[SkillDefinition] | None = None,
         on_token: Callable[[str], Awaitable[None]] | None = None,
         on_tool: Callable[[ToolCallRecord], Awaitable[None]] | None = None,
+        system_prompt: str | None = None,
     ) -> OrchestratorResult:
         """执行工具版对话: 激活 Skill → 注入可见工具 → 工具调用循环 → 最终答案.
 
@@ -111,32 +124,54 @@ class ToolOrchestrator:
             on_token: 可选流式回调, 最终答案逐段回传(LLM 支持 astream 时);
                 None 时一次性返回完整答案.
             on_tool: 可选回调, 每次工具调用完成后通知调用方(事件流展示用).
+            system_prompt: 自定义系统提示(如子 Agent 任务型 prompt); None 时用默认提示,
+                非 None 时优先使用且不再拼接 context(调用方自行拼好).
         """
+        # ---- 第 1 步: 确定激活 Skill 集 ----
+        # 调用方未指定 active_skills 时, 取 SkillManager 中全部启用项;
+        # 无论来源如何, 都按当前 Agent 角色过滤(subagent_only 域对主 Agent 不可见).
         if active_skills is None:
             active = filter_skills_by_role(self._skills.active_skills(), agent_role)
         else:
             active = filter_skills_by_role(active_skills, agent_role)
+
+        # ---- 第 2 步: 计算可见工具 ----
+        # VisibilityCalculator 依据激活 Skill + 角色 + 注册表计算本轮可注入的工具集,
+        # 完成执行域隔离(权限边界在第 4 步 Invoke 前还会逐次校验).
         visible = self._visibility.compute(active, agent_role, self._registry)
         if not visible:
+            # 无可见工具: 直接短路返回, 明确标记 no_tools, 上层据此决定兜底策略
             return OrchestratorResult(answer="", no_tools=True)
 
+        # ---- 第 3 步: 注入工具并组装首轮消息 ----
+        # Injector 把 Skill 定义转换成 OpenAI 风格 tool 描述(每个 Skill 一个工具),
+        # bind_tools 绑定到 LLM, 使模型在响应中能输出 tool_calls.
         tool_defs = self._injector.inject(visible)
         bound = self._llm.bind_tools(tool_defs)
-        if context:
+        # 上层预检索过(chat_service)时, 把检索上下文注入 system prompt,
+        # 避免模型重复调用检索工具(上下文取配置中 max_retrieve_context_chars 截断).
+        if system_prompt is not None:
+            system = system_prompt
+        elif context:
             system = _SYSTEM_PROMPT_WITH_CONTEXT.replace("{context}", context)
         else:
             system = _SYSTEM_PROMPT
+        # 消息结构: [system, *(history), user]; 历史原样透传, 不裁剪
         messages: list[Any] = [
             {"role": "system", "content": system},
             *(history or []),
             {"role": "user", "content": query},
         ]
 
+        # ---- 第 4 步: 工具调用循环 ----
+        # 每轮先让 LLM 生成响应; 若有 tool_calls 则执行并回填 tool 消息, 进入下一轮;
+        # 直到 LLM 不再调用工具(给出最终答案)或耗尽 max_tool_rounds.
         tool_calls_log: list[ToolCallRecord] = []
         max_rounds = self._settings.max_tool_rounds
         for round_idx in range(max_rounds):
+            # 流式路径: 调用方要求逐段回传且 LLM 支持 astream 时走流式;
+            # 把每轮全部分块用 + 聚合为一条完整响应, 供后续统一判断工具调用.
             if on_token is not None and hasattr(bound, "astream"):
-                # 流式收集本轮响应, 聚合后判断是否工具调用
                 chunks: list[Any] = []
                 async for chunk in bound.astream(messages):
                     chunks.append(chunk)
@@ -144,33 +179,42 @@ class ToolOrchestrator:
                 for c in chunks[1:]:
                     response = response + c
             else:
+                # 非流式路径: 一次性等待完整响应
                 response = await bound.ainvoke(messages)
+            # tool_calls 为空即本轮不再调用工具, 可安全结束循环
             calls = getattr(response, "tool_calls", None) or []
             if not calls:
-                # 无工具调用: 本轮即最终答案; 流式路径把收集到的文本逐段回传
+                # 无工具调用: 本轮响应即最终答案
                 if on_token is not None and hasattr(bound, "astream"):
+                    # 流式路径: 把各分片中的文本增量逐段回传调用方(边生成边展示),
+                    # 再从聚合响应中提取完整答案用于返回.
                     for c in chunks:
                         text = self._extract_text(c)
                         if text:
                             await on_token(text)
                     answer = self._extract_text(response)
                 else:
+                    # 非流式路径: 直接取 content(缺失时兜底取 str 表示), 一次性回传
                     answer = getattr(response, "content", "") or str(response)
                     if on_token is not None:
                         await on_token(answer)
                 return OrchestratorResult(
                     answer=answer,
                     tool_calls=tool_calls_log,
-                    rounds=round_idx,
+                    rounds=round_idx,  # rounds 记录实际用掉的轮数
                 )
-            # 回填 assistant 消息(含 tool_calls), 供 LLM 关联工具结果
+            # 本轮有工具调用: 先把含 tool_calls 的 assistant 消息整体回填,
+            # 下轮模型才能借助这些调用意图关联后续的 tool 结果.
             messages.append(response)
             for tc in calls:
+                # 执行单个工具调用(权限校验/执行/指标记录在 _invoke_tool 内完成)
                 record = await self._invoke_tool(tc, agent_role, active, session_id)
                 tool_calls_log.append(record)
                 if on_tool is not None:
+                    # 每次调用完成后通知上层(事件流展示用)
                     await on_tool(record)
-                # 工具结果以 tool 消息回填
+                # 工具结果以 role=tool 消息回填(tool_call_id 与 assistant 消息的
+                # tool_calls 一一对应; 成功写 output, 失败写 error 文本, 不让异常中断循环).
                 messages.append(
                     {
                         "role": "tool",
@@ -180,6 +224,9 @@ class ToolOrchestrator:
                     }
                 )
 
+        # ---- 第 5 步: 超过最大轮数 ----
+        # 循环自然结束说明 LLM 一直未给出最终答案; 记录告警并以占位答案返回,
+        # truncated=True 让上层知道结果不完整, 可选择提示用户或拼接已有内容.
         logger.warning("tool_orchestrator.max_rounds_reached", rounds=max_rounds)
         return OrchestratorResult(
             answer="(已达到最大工具调用轮数, 停止循环)",

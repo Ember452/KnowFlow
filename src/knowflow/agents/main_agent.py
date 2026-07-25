@@ -1,7 +1,7 @@
 """MainAgent - 意图理解/任务规划/结果汇总.
 
 decide/act/observe 三步实现:
-- decide: understand(规则意图分类) + plan(LLM 规划) → 是否委派
+- decide: understand(两级意图路由) + plan(LLM 规划) → 是否委派
 - act: 输出规划子任务(委派时)
 - observe: 汇总子结果 / 无委派时直答
 
@@ -20,8 +20,9 @@ from knowflow.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# 复杂任务信号词: 命中任一即进入规划流程(是否委派由 LLM 最终判断)
-_COMPLEX_KEYWORDS = (
+# 两级意图路由: 强信号词命中直接判 complex(大概率可拆分);
+# 弱信号词/单个并列连词判 uncertain, 交 LLM 兜底判断是否委派.
+_STRONG_COMPLEX_KEYWORDS = (
     "对比",
     "比较",
     "分别",
@@ -31,9 +32,9 @@ _COMPLEX_KEYWORDS = (
     "差异",
     "优缺点",
     "同时查询",
-    "有哪些",
 )
-# 多候选分隔符: 出现 >=2 次分隔视为存在多个并列对象(可能可拆分)
+_WEAK_COMPLEX_KEYWORDS = ("有哪些",)
+# 多候选分隔符: >=2 次分隔视为多个并列对象(判 complex), 恰好 1 次判 uncertain
 _CANDIDATE_SPLITTERS = ("、", "/", "和", "与", "vs", "VS")
 
 # JSON 代码块包裹剥离(与 entity_extractor 同款容错)
@@ -68,7 +69,7 @@ class MainAgent(BaseAgent):
         """理解 + 规划, 决定是否需要委派."""
         query = state.get("query", "")
         intent = self.understand(query)
-        if intent == "complex":
+        if intent in ("complex", "uncertain"):
             plan = await self.plan(query)
         else:
             plan = PlanResult(needs_delegation=False, reason="简单任务无需委派")
@@ -101,21 +102,37 @@ class MainAgent(BaseAgent):
 
     @staticmethod
     def understand(query: str) -> str:
-        """规则意图分类: complex(可能需委派) / simple(直连).
+        """两级意图路由: 规则快速通道(simple 直连零 LLM) + LLM 兜底(complex/uncertain).
 
-        命中复杂信号词, 或出现 >=2 个并列分隔符(多个候选对象)视为 complex.
+        - simple: 无信号词/无并列分隔符, 直接直连(零 LLM 调用)
+        - complex: 命中强信号词或 >=2 个并列分隔符, 进入 LLM 规划
+        - uncertain: 弱信号词(有哪些)或单个并列连词, 是否委派交 LLM 最终判断
         """
         if not query:
             return "simple"
-        if any(k in query for k in _COMPLEX_KEYWORDS):
+        if any(k in query for k in _STRONG_COMPLEX_KEYWORDS):
             return "complex"
         split_count = sum(query.count(s) for s in _CANDIDATE_SPLITTERS)
-        return "complex" if split_count >= 2 else "simple"
+        if split_count >= 2:
+            return "complex"
+        if split_count >= 1:
+            return "uncertain"
+        if any(k in query for k in _WEAK_COMPLEX_KEYWORDS):
+            return "uncertain"
+        return "simple"
 
-    async def plan(self, query: str) -> PlanResult:
-        """LLM 任务规划: 输出 needs_delegation + 可并发子任务列表."""
+    async def plan(self, query: str, available_tools: str = "") -> PlanResult:
+        """LLM 任务规划: 输出 needs_delegation + 可并发子任务列表.
+
+        Args:
+            query: 用户问题.
+            available_tools: 子 Agent 可用工具清单文本(规划时判断任务可行性);
+                空串时提示无工具(仅检索上下文).
+        """
         prompt = PLANNER_PROMPT_TEMPLATE.format(
-            query=query, max_subtasks=self._settings.agent_max_subtasks
+            query=query,
+            max_subtasks=self._settings.agent_max_subtasks,
+            available_tools=available_tools or "(子 Agent 无工具, 仅基于检索上下文回答)",
         )
         llm = self._get_llm()
 
