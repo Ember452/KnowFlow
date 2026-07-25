@@ -20,6 +20,7 @@ from knowflow.core.exceptions import NotFoundError, ValidationError
 from knowflow.core.logging import get_logger
 from knowflow.db.repositories.document_repo import DocumentRepo
 from knowflow.models.document import Document
+from knowflow.retrieval.cache import RetrievalCache
 from knowflow.schemas.document import DeleteResponse, DocumentInfo, ReindexResponse, UploadResponse
 from knowflow.tasks.broker import TaskBroker
 
@@ -35,12 +36,15 @@ class DocumentService:
         minio: Any,
         broker: TaskBroker | None,
         settings: Settings | None = None,
+        retrieval_cache: RetrievalCache | None = None,
     ) -> None:
         self.session = session
         self.minio = minio
         self.broker = broker
         self.settings = settings or get_settings()
         self._repo = DocumentRepo(session)
+        # 文档删除会改变检索结果, 必须失效旧缓存, 否则返回过期结果
+        self._retrieval_cache = retrieval_cache or RetrievalCache()
 
     @staticmethod
     def _file_type(file_name: str) -> str:
@@ -161,6 +165,8 @@ class DocumentService:
 
         deleted = await self._repo.delete(doc_id)
         await self.session.commit()
+        # 删除成功后失效全部检索缓存(Redis 不可用时降级 no-op, 不阻塞删除)
+        await self._retrieval_cache.clear_prefix()
         return DeleteResponse(doc_id=doc_id, deleted=deleted)
 
     async def reindex(self, doc_id: int) -> ReindexResponse:

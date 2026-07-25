@@ -99,8 +99,11 @@ class GraphRAGRetriever:
 
         # 1. 缓存查询
         # 如果缓存中命中,直接返回缓存中的chunk和查询时间
-        # 具体细节是对用户的query进行hashlib.md5(query.encode().hexdigest())哈希摘要
-        cached = await self._cache.get(query)
+        # key 由 query + 检索参数(top_k/with_expand/with_rerank) 共同决定,
+        # 避免参数不一致的请求命中彼此缓存返回错误结果
+        cached = await self._cache.get(
+            query, top_k=top_k, with_expand=with_expand, with_rerank=with_rerank
+        )
         if cached is not None:
             # 缓存命中: 直接返回(需要从 DB 取 chunk 内容)
             chunks = await self._fetch_chunks(cached)
@@ -155,7 +158,9 @@ class GraphRAGRetriever:
         chunks = await self._fetch_chunks(hits)
 
         # 6. 写缓存
-        await self._cache.set(query, hits)
+        await self._cache.set(
+            query, hits, top_k=top_k, with_expand=with_expand, with_rerank=with_rerank
+        )
 
         latency_ms = (time.perf_counter() - start) * 1000
         return RetrievalResult(

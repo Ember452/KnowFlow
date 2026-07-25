@@ -10,11 +10,12 @@ from knowflow.services.document_service import DocumentService
 from tests.fakes import FakeBroker, FakeMinio
 
 
-def _service(session, minio=None, broker=None) -> DocumentService:
+def _service(session, minio=None, broker=None, retrieval_cache=None) -> DocumentService:
     return DocumentService(
         session=session,
         minio=minio or FakeMinio(),
         broker=broker or FakeBroker(),
+        retrieval_cache=retrieval_cache,
     )
 
 
@@ -107,6 +108,30 @@ async def test_delete_removes_document(db_session) -> None:
     assert resp.deleted is True
     _items, total = await svc.list("u1")
     assert total == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_clears_retrieval_cache(db_session) -> None:
+    """删除成功后失效全部检索缓存(知识库已变更, 不得返回过期结果)."""
+
+    class FakeRetrievalCache:
+        def __init__(self) -> None:
+            self.clear_calls = 0
+
+        async def clear_prefix(self, prefix: str = "knowflow:retrieval:") -> None:
+            self.clear_calls += 1
+
+    cache = FakeRetrievalCache()
+    svc = _service(db_session, retrieval_cache=cache)
+    up = await svc.upload("d.md", b"x", "u1")
+    await svc.delete(up.doc_id)
+    assert cache.clear_calls == 1
+
+    # 删除不存在的文档不触发失效
+    cache.clear_calls = 0
+    with pytest.raises(NotFoundError):
+        await svc.delete(99999)
+    assert cache.clear_calls == 0
 
 
 @pytest.mark.asyncio

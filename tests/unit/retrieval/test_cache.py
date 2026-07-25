@@ -45,7 +45,7 @@ async def test_cache_miss() -> None:
     """未命中返回 None."""
     redis = FakeRedis()
     cache = RetrievalCache(redis=redis, ttl=60)
-    assert await cache.get("query") is None
+    assert await cache.get("query", top_k=5, with_expand=True, with_rerank=True) is None
 
 
 @pytest.mark.asyncio
@@ -57,8 +57,8 @@ async def test_cache_hit_after_set() -> None:
         ChunkScore(chunk_id=1, score=0.9, source="hybrid"),
         ChunkScore(chunk_id=2, score=0.5, source="expand"),
     ]
-    await cache.set("query", results)
-    cached = await cache.get("query")
+    await cache.set("query", results, top_k=5, with_expand=True, with_rerank=True)
+    cached = await cache.get("query", top_k=5, with_expand=True, with_rerank=True)
     assert cached is not None
     assert len(cached) == 2
     assert cached[0].chunk_id == 1
@@ -71,7 +71,13 @@ async def test_cache_ttl_set() -> None:
     """set 时 TTL 被正确传递."""
     redis = FakeRedis()
     cache = RetrievalCache(redis=redis, ttl=120)
-    await cache.set("query", [ChunkScore(chunk_id=1, score=0.5, source="hybrid")])
+    await cache.set(
+        "query",
+        [ChunkScore(chunk_id=1, score=0.5, source="hybrid")],
+        top_k=5,
+        with_expand=True,
+        with_rerank=True,
+    )
     assert len(redis.set_calls) == 1
     _, _, ex = redis.set_calls[0]
     assert ex == 120
@@ -82,10 +88,16 @@ async def test_cache_invalidate() -> None:
     """invalidate 删除单条缓存."""
     redis = FakeRedis()
     cache = RetrievalCache(redis=redis, ttl=60)
-    await cache.set("query", [ChunkScore(chunk_id=1, score=0.5, source="hybrid")])
-    assert await cache.get("query") is not None
-    await cache.invalidate("query")
-    assert await cache.get("query") is None
+    await cache.set(
+        "query",
+        [ChunkScore(chunk_id=1, score=0.5, source="hybrid")],
+        top_k=5,
+        with_expand=True,
+        with_rerank=True,
+    )
+    assert await cache.get("query", top_k=5, with_expand=True, with_rerank=True) is not None
+    await cache.invalidate("query", top_k=5, with_expand=True, with_rerank=True)
+    assert await cache.get("query", top_k=5, with_expand=True, with_rerank=True) is None
 
 
 @pytest.mark.asyncio
@@ -93,8 +105,20 @@ async def test_cache_clear_prefix() -> None:
     """clear_prefix 清空所有检索缓存."""
     redis = FakeRedis()
     cache = RetrievalCache(redis=redis, ttl=60)
-    await cache.set("q1", [ChunkScore(chunk_id=1, score=0.5, source="hybrid")])
-    await cache.set("q2", [ChunkScore(chunk_id=2, score=0.3, source="hybrid")])
+    await cache.set(
+        "q1",
+        [ChunkScore(chunk_id=1, score=0.5, source="hybrid")],
+        top_k=5,
+        with_expand=True,
+        with_rerank=True,
+    )
+    await cache.set(
+        "q2",
+        [ChunkScore(chunk_id=2, score=0.3, source="hybrid")],
+        top_k=10,
+        with_expand=False,
+        with_rerank=False,
+    )
     assert len(redis.store) == 2
     await cache.clear_prefix()
     assert len(redis.store) == 0
@@ -106,7 +130,7 @@ async def test_cache_redis_failure_degrades_get() -> None:
     redis = FakeRedis()
     redis.fail = True
     cache = RetrievalCache(redis=redis, ttl=60)
-    assert await cache.get("query") is None
+    assert await cache.get("query", top_k=5, with_expand=True, with_rerank=True) is None
 
 
 @pytest.mark.asyncio
@@ -116,7 +140,13 @@ async def test_cache_redis_failure_degrades_set() -> None:
     redis.fail = True
     cache = RetrievalCache(redis=redis, ttl=60)
     # 不抛异常
-    await cache.set("query", [ChunkScore(chunk_id=1, score=0.5, source="hybrid")])
+    await cache.set(
+        "query",
+        [ChunkScore(chunk_id=1, score=0.5, source="hybrid")],
+        top_k=5,
+        with_expand=True,
+        with_rerank=True,
+    )
     assert len(redis.store) == 0
 
 
@@ -124,8 +154,14 @@ async def test_cache_redis_failure_degrades_set() -> None:
 async def test_cache_redis_not_initialized() -> None:
     """Redis 未初始化时降级, get 返回 None, set 为 no-op."""
     cache = RetrievalCache(redis=None, ttl=60)
-    assert await cache.get("query") is None
-    await cache.set("query", [ChunkScore(chunk_id=1, score=0.5, source="hybrid")])
+    assert await cache.get("query", top_k=5, with_expand=True, with_rerank=True) is None
+    await cache.set(
+        "query",
+        [ChunkScore(chunk_id=1, score=0.5, source="hybrid")],
+        top_k=5,
+        with_expand=True,
+        with_rerank=True,
+    )
     # 无异常即通过
 
 
@@ -138,8 +174,8 @@ async def test_cache_serialization_roundtrip() -> None:
         ChunkScore(chunk_id=i, score=0.1 * i, source="hybrid" if i % 2 == 0 else "expand")
         for i in range(1, 6)
     ]
-    await cache.set("test", original)
-    restored = await cache.get("test")
+    await cache.set("test", original, top_k=5, with_expand=True, with_rerank=True)
+    restored = await cache.get("test", top_k=5, with_expand=True, with_rerank=True)
     assert restored is not None
     assert len(restored) == len(original)
     for orig, rest in zip(original, restored, strict=True):
@@ -153,12 +189,38 @@ async def test_cache_key_md5_hashed() -> None:
     """缓存 key 使用 md5 hash, 避免特殊字符."""
     redis = FakeRedis()
     cache = RetrievalCache(redis=redis, ttl=60)
-    await cache.set("hello world", [])
-    # key 应为 md5("hello world") 而非原文
+    await cache.set("hello world", [], top_k=5, with_expand=True, with_rerank=True)
+    # key 应为 md5("hello world|5|True|True") 而非原文
     import hashlib
 
-    expected_key = f"knowflow:retrieval:{hashlib.md5(b'hello world').hexdigest()}"
+    expected_key = f"knowflow:retrieval:{hashlib.md5(b'hello world|5|True|True').hexdigest()}"
     assert expected_key in redis.store
+
+
+@pytest.mark.asyncio
+async def test_cache_key_includes_params() -> None:
+    """同一 query 不同检索参数(返回条数/扩展开关/精排开关)生成不同缓存键.
+
+    回归: 参数不一致的请求不得命中彼此缓存, 否则 top_k 不足或开关失效.
+    """
+    redis = FakeRedis()
+    cache = RetrievalCache(redis=redis, ttl=60)
+    params_list = [
+        {"top_k": 5, "with_expand": True, "with_rerank": True},
+        {"top_k": 10, "with_expand": True, "with_rerank": True},
+        {"top_k": 5, "with_expand": False, "with_rerank": True},
+        {"top_k": 5, "with_expand": True, "with_rerank": False},
+    ]
+    for i, params in enumerate(params_list):
+        await cache.set("query", [ChunkScore(chunk_id=i, score=0.5, source="hybrid")], **params)
+    assert len(redis.store) == len(params_list)
+    # 用与 set 相同的参数取, 各自命中
+    for i, params in enumerate(params_list):
+        cached = await cache.get("query", **params)
+        assert cached is not None
+        assert cached[0].chunk_id == i
+    # 用不同参数取, 不应命中
+    assert await cache.get("query", top_k=20, with_expand=True, with_rerank=True) is None
 
 
 @pytest.mark.asyncio
@@ -166,6 +228,6 @@ async def test_cache_empty_results() -> None:
     """空结果列表也能缓存与读取."""
     redis = FakeRedis()
     cache = RetrievalCache(redis=redis, ttl=60)
-    await cache.set("query", [])
-    cached = await cache.get("query")
+    await cache.set("query", [], top_k=5, with_expand=True, with_rerank=True)
+    cached = await cache.get("query", top_k=5, with_expand=True, with_rerank=True)
     assert cached == []

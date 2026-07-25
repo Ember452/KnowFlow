@@ -92,14 +92,31 @@ class FakeCache:
     def __init__(self, cached: list[ChunkScore] | None = None) -> None:
         self._cached = cached
         self.get_calls: int = 0
-        self.set_calls: list[tuple[str, list[ChunkScore]]] = []
+        self.get_args: list[tuple[str, int, bool, bool]] = []
+        self.set_calls: list[tuple[str, int, bool, bool, list[ChunkScore]]] = []
 
-    async def get(self, query: str) -> list[ChunkScore] | None:
+    async def get(
+        self,
+        query: str,
+        *,
+        top_k: int,
+        with_expand: bool,
+        with_rerank: bool,
+    ) -> list[ChunkScore] | None:
         self.get_calls += 1
+        self.get_args.append((query, top_k, with_expand, with_rerank))
         return self._cached
 
-    async def set(self, query: str, results: list[ChunkScore]) -> None:
-        self.set_calls.append((query, results))
+    async def set(
+        self,
+        query: str,
+        results: list[ChunkScore],
+        *,
+        top_k: int,
+        with_expand: bool,
+        with_rerank: bool,
+    ) -> None:
+        self.set_calls.append((query, top_k, with_expand, with_rerank, results))
 
 
 def _make_retriever(
@@ -157,6 +174,26 @@ async def test_retrieve_cache_hit_skips_pipeline() -> None:
     # 缓存命中不写缓存
     assert cache.set_calls == []
     assert len(result.chunks) >= 1
+
+
+@pytest.mark.asyncio
+async def test_retrieve_passes_params_to_cache() -> None:
+    """缓存 get/set 收到与检索一致的参数(参与缓存键, 参数不一致不得相互命中)."""
+    hybrid_hits = [ChunkScore(chunk_id=1, score=0.5, source="hybrid")]
+    retriever, _hybrid, _expander, _reranker, cache = _make_retriever(
+        hybrid_hits=hybrid_hits,
+        expanded=hybrid_hits,
+        reranked=hybrid_hits,
+    )
+
+    await retriever.retrieve("query", top_k=7, with_expand=False, with_rerank=True)
+
+    # get 与 set 均使用相同参数
+    assert cache.get_args == [("query", 7, False, True)]
+    assert len(cache.set_calls) == 1
+    assert cache.set_calls[0][1] == 7
+    assert cache.set_calls[0][2] is False
+    assert cache.set_calls[0][3] is True
 
 
 @pytest.mark.asyncio
