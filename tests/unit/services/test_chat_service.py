@@ -475,6 +475,46 @@ async def test_chat_multi_agent_failure_falls_back_to_direct(db_session: AsyncSe
     assert len(multi.run_calls) == 1  # 编排确实被调用过, 只是失败降级
 
 
+async def test_chat_stream_multi_agent_emits_subagent_tool_events(
+    db_session: AsyncSession,
+) -> None:
+    """流式链路: 子 Agent 工具调用以 tool_start/tool_end 事件回传(带 subtask_id)."""
+    from knowflow.services.tool_orchestrator import ToolCallRecord
+
+    multi = FakeMultiAgentOrchestrator(
+        answer="汇总答案",
+        tool_records=[
+            ToolCallRecord(
+                tool_name="calculator",
+                args={"expression": "2**10"},
+                success=True,
+                output=1024,
+                latency_ms=1.5,
+                subtask_id="t1",
+            )
+        ],
+    )
+    service = _service(db_session, multi_agent=multi)
+    events = [
+        e
+        async for e in service.stream_events(
+            ChatRequest(message="对比 A 和 B 的价格", user_id="u1")
+        )
+    ]
+    types = [e["event"] for e in events]
+    assert "tool_start" in types
+    assert "tool_end" in types
+    assert types[-1] == "done"
+    start = next(e for e in events if e["event"] == "tool_start")
+    start_data = json.loads(start["data"])
+    assert start_data["tool"] == "calculator"
+    assert start_data["subtask_id"] == "t1"
+    end = next(e for e in events if e["event"] == "tool_end")
+    end_data = json.loads(end["data"])
+    assert end_data["success"] is True
+    assert end_data["subtask_id"] == "t1"
+
+
 async def test_chat_stream_multi_agent_failure_falls_back(db_session: AsyncSession) -> None:
     """流式链路: 编排失败回退直连, 事件序列仍以 done 收尾(无 progress)."""
     llm = FakeChatLLM()
@@ -496,7 +536,14 @@ class _StreamingMultiAgent(FakeMultiAgentOrchestrator):
     """fake 多 Agent 编排器: 调用 on_progress/on_token 回调, 模拟真实流式行为."""
 
     async def run(
-        self, query, session_id=None, context="", history=None, on_token=None, on_progress=None
+        self,
+        query,
+        session_id=None,
+        context="",
+        history=None,
+        on_token=None,
+        on_progress=None,
+        on_tool=None,
     ):
         from knowflow.agents.orchestrator import MultiAgentResult
 

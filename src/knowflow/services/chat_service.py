@@ -216,13 +216,21 @@ class ChatService:
     # ── 记忆集成 ──
 
     async def _recall_memories(self, query: str, user_id: str | None) -> str:
-        """召回用户长期记忆并格式化为提示文本; 无管理器/用户时返回空串."""
+        """召回用户长期记忆并格式化为提示文本; 无管理器/用户时返回空串.
+
+        蒸馏的核心记忆摘要(最新会话摘要)以 "核心记忆:" 前缀注入,
+        与命中条目共同构成提示注入(长期偏好 + 浓缩结论).
+        """
         if self._memory_manager is None or not user_id:
             return ""
         hits = await self._memory_manager.recall(
             query, user_id, top_k=self.settings.memory_recall_top_k
         )
-        return self._memory_manager.recall_text(hits)
+        text = self._memory_manager.recall_text(hits)
+        summary = await self._memory_manager.latest_summary(user_id)
+        if summary:
+            text = f"核心记忆: {summary}" + (f"\n\n{text}" if text else "")
+        return text
 
     async def _observe_and_sediment(
         self, session_id: int, user_id: str | None, role: str, content: str
@@ -418,12 +426,16 @@ class ChatService:
                 q = asyncio.Queue[Any]()
                 got_progress = False
                 got_token = False
+                ma_emitted_calls: list[str] = []  # 已回传 tool 事件的 call_id
 
                 async def on_token(delta: str) -> None:
                     await q.put(("token", delta))
 
                 async def on_progress(payload: dict[str, Any]) -> None:
                     await q.put(("progress", payload))
+
+                async def on_tool(record: Any) -> None:
+                    await q.put(("tool", record))
 
                 run_task = asyncio.create_task(
                     self._multi_agent.run(
@@ -433,6 +445,7 @@ class ChatService:
                         history=history,
                         on_token=on_token,
                         on_progress=on_progress,
+                        on_tool=on_tool,
                     )
                 )
                 while True:
@@ -445,6 +458,31 @@ class ChatService:
                     if kind == "progress":
                         got_progress = True
                         yield make_event("progress", payload)
+                    elif kind == "tool":
+                        # 子 Agent 工具调用事件: subtask_id 标注来源子任务
+                        call_id = uuid.uuid4().hex[:16]
+                        ma_emitted_calls.append(call_id)
+                        subtask_id = getattr(payload, "subtask_id", None)
+                        yield make_event(
+                            "tool_start",
+                            {
+                                "tool": payload.tool_name,
+                                "args": payload.args,
+                                "call_id": call_id,
+                                "subtask_id": subtask_id,
+                            },
+                        )
+                        yield make_event(
+                            "tool_end",
+                            {
+                                "tool": payload.tool_name,
+                                "call_id": call_id,
+                                "success": payload.success,
+                                "latency_ms": payload.latency_ms,
+                                "error": payload.error,
+                                "subtask_id": subtask_id,
+                            },
+                        )
                     elif kind == "token":
                         got_token = True
                         yield make_event("token", {"delta": payload})
@@ -466,6 +504,31 @@ class ChatService:
                                 "run_id": ma.run_id,
                             },
                         )
+                    # 子 Agent 工具调用未走回调时, 用子任务结果补发(fake/降级兼容)
+                    if not ma_emitted_calls:
+                        for s in ma.subtasks:
+                            for tc in s.tool_calls:
+                                call_id = uuid.uuid4().hex[:16]
+                                yield make_event(
+                                    "tool_start",
+                                    {
+                                        "tool": tc["tool_name"],
+                                        "args": tc.get("args", {}),
+                                        "call_id": call_id,
+                                        "subtask_id": s.id,
+                                    },
+                                )
+                                yield make_event(
+                                    "tool_end",
+                                    {
+                                        "tool": tc["tool_name"],
+                                        "call_id": call_id,
+                                        "success": tc.get("success", True),
+                                        "latency_ms": tc.get("latency_ms", 0.0),
+                                        "error": tc.get("error"),
+                                        "subtask_id": s.id,
+                                    },
+                                )
                     # 已流式回传 token 时不再重复; 否则整段回传(兼容 fake)
                     if not got_token:
                         yield make_event("token", {"delta": ma.answer})
