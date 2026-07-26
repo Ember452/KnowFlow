@@ -1814,3 +1814,138 @@ $env:GIT_COMMITTER_DATE = "2026-07-23T10:00:00+08:00"
 git add web/src/api/chat.ts web/src/api/memory.ts web/src/generated/apiEndpoints.ts web/src/pages/Memory.tsx
 git commit -m "feat(web): 会话历史与记忆沉淀接口适配"
 ```
+
+---
+
+### 119. feat(memory): 记忆蒸馏/冲突检测与召回可观测
+
+- **提交时间**：2026-07-24 15:42
+- **说明**：sediment 时压缩摘要沉淀为会话级核心记忆（memory_summaries 覆盖式），recall 时注入系统提示；新增 ConflictDetector 对新记忆做矛盾检测并写入 memory_conflicts 留痕（不阻断写入）；recall 经 tracer 记录命中 span；chat 端点装配 ConflictStore；新增 0003 迁移与治理单测。
+- **变更文件**：`src/knowflow/memory/conflict.py`、`src/knowflow/memory/manager.py`、`src/knowflow/memory/long_term.py`、`src/knowflow/memory/store.py`、`src/knowflow/models/memory.py`、`src/knowflow/models/__init__.py`、`src/knowflow/db/migrations/versions/0003_add_memory_conflicts.py`、`src/knowflow/api/v1/endpoints/chat.py`、`tests/unit/memory/test_memory_governance.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-24T15:42:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-24T15:42:00+08:00"
+git add src/knowflow/memory/ src/knowflow/models/memory.py src/knowflow/models/__init__.py src/knowflow/db/migrations/versions/0003_add_memory_conflicts.py src/knowflow/api/v1/endpoints/chat.py tests/unit/memory/test_memory_governance.py
+git commit -m "feat(memory): 记忆蒸馏/冲突检测与召回可观测"
+```
+
+---
+
+### 120. feat(tools): 接入 MCP 工具生态
+
+- **提交时间**：2026-07-24 20:08
+- **说明**：新增 mcp 依赖与 tools/mcp 模块（adapter/gateway/register + demo Server）；config 新增 mcp_servers 配置，启动时经 lifecycle 注册进统一工具注册表（单个不可用告警降级不阻塞启动）；工具自动纳入执行域隔离与 SUBAGENT 可见性治理；.env.example 补充配置示例。
+- **变更文件**：`pyproject.toml`、`uv.lock`、`.env.example`、`src/knowflow/core/config.py`、`src/knowflow/core/lifecycle.py`、`src/knowflow/tools/mcp/__init__.py`、`src/knowflow/tools/mcp/adapter.py`、`src/knowflow/tools/mcp/gateway.py`、`src/knowflow/tools/mcp/register.py`、`src/knowflow/tools/mcp/servers/__init__.py`、`src/knowflow/tools/mcp/servers/demo.py`、`tests/unit/tools/test_mcp_gateway.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-24T20:08:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-24T20:08:00+08:00"
+git add pyproject.toml uv.lock .env.example src/knowflow/core/config.py src/knowflow/core/lifecycle.py src/knowflow/tools/mcp/ tests/unit/tools/test_mcp_gateway.py
+git commit -m "feat(tools): 接入 MCP 工具生态"
+```
+
+---
+
+### 121. feat(agents): 子任务质量门禁与工具执行
+
+- **提交时间**：2026-07-25 09:26
+- **说明**：MainAgent 意图路由升级为两级（强/弱信号词 + 并列分隔符判 complex/uncertain/simple），规划时注入可用工具清单；Subagent 支持按 SUBAGENT 角色执行工具循环并经质量检查重试（最多 2 次尝试）；ToolOrchestrator 新增 visible_tools_text 与 system_prompt 支持；编排器注入 retriever/tool_orchestrator 并透传 on_tool 回调；deps 装配子 Agent 检索与工具依赖。
+- **变更文件**：`src/knowflow/agents/main_agent.py`、`src/knowflow/agents/orchestrator.py`、`src/knowflow/agents/subagent.py`、`src/knowflow/agents/prompts.py`、`src/knowflow/agents/concurrent.py`、`src/knowflow/agents/state.py`、`src/knowflow/api/deps.py`、`src/knowflow/services/tool_orchestrator.py`、`tests/fakes.py`、`tests/unit/agents/test_main_agent.py`、`tests/unit/agents/test_orchestrator.py`、`tests/unit/agents/test_subagent.py`、`tests/unit/services/test_tool_orchestrator.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-25T09:26:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-25T09:26:00+08:00"
+git add src/knowflow/agents/ src/knowflow/api/deps.py src/knowflow/services/tool_orchestrator.py tests/fakes.py tests/unit/agents/ tests/unit/services/test_tool_orchestrator.py
+git commit -m "feat(agents): 子任务质量门禁与工具执行"
+```
+
+---
+
+### 122. feat(chat): 注入核心记忆摘要与子任务工具事件
+
+- **提交时间**：2026-07-25 13:47
+- **说明**：ChatService 检索注入前拼接核心记忆摘要（"核心记忆:" 前缀，与命中条目共同注入）；SSE 链路透传子 Agent 工具调用事件（tool_start/tool_end 携带 subtask_id），fake/降级路径用子任务结果补发；补齐对话链路单测。
+- **变更文件**：`src/knowflow/services/chat_service.py`、`tests/unit/services/test_chat_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-25T13:47:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-25T13:47:00+08:00"
+git add src/knowflow/services/chat_service.py tests/unit/services/test_chat_service.py
+git commit -m "feat(chat): 注入核心记忆摘要与子任务工具事件"
+```
+
+---
+
+### 123. fix(retrieval): 缓存 key 参数化与文档变更失效
+
+- **提交时间**：2026-07-25 17:53
+- **说明**：检索缓存 key 纳入 top_k/with_expand/with_rerank（同 query 不同参数不再互串结果）；文档删除/索引后失效全部检索缓存（Redis 不可用降级 no-op 不阻塞主流程）；retriever 与 document_service 适配新签名并补齐缓存/检索/文档服务单测。
+- **变更文件**：`src/knowflow/retrieval/cache.py`、`src/knowflow/retrieval/retriever.py`、`src/knowflow/services/document_service.py`、`tests/unit/retrieval/test_cache.py`、`tests/unit/retrieval/test_retriever.py`、`tests/unit/services/test_document_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-25T17:53:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-25T17:53:00+08:00"
+git add src/knowflow/retrieval/cache.py src/knowflow/retrieval/retriever.py src/knowflow/services/document_service.py tests/unit/retrieval/test_cache.py tests/unit/retrieval/test_retriever.py tests/unit/services/test_document_service.py
+git commit -m "fix(retrieval): 缓存 key 参数化与文档变更失效"
+```
+
+---
+
+### 124. feat(retrieval): 实体抽取并发化
+
+- **提交时间**：2026-07-26 09:14
+- **说明**：索引实体抽取改为并发执行（asyncio.gather + 信号量限流 4，同步 LLM 调用仍走线程池），抽取结果按 chunk 顺序对齐后顺序写库（实体 ID 映射不变）；8 块文档抽取耗时从串行 8 次调用降至约 2 波；新增并发与限流单测。
+- **变更文件**：`src/knowflow/retrieval/pipeline.py`、`tests/unit/retrieval/test_pipeline.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-26T09:14:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-26T09:14:00+08:00"
+git add src/knowflow/retrieval/pipeline.py tests/unit/retrieval/test_pipeline.py
+git commit -m "feat(retrieval): 实体抽取并发化"
+```
+
+---
+
+### 125. feat(skills): 新增报告写作 Skill
+
+- **提交时间**：2026-07-26 12:31
+- **说明**：新增 skills/report_writing（报告写作声明式 Skill，覆盖报告结构/数据支撑/结论表达），工具注册表自动加载，Skill 列表与加载测试同步更新为 5 个。
+- **变更文件**：`skills/report_writing/SKILL.md`、`tests/unit/tools/test_skill_loader.py`、`tests/unit/tools/test_skill_manager.py`、`tests/unit/api/test_skill_endpoint.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-26T12:31:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-26T12:31:00+08:00"
+git add skills/report_writing/ tests/unit/tools/test_skill_loader.py tests/unit/tools/test_skill_manager.py tests/unit/api/test_skill_endpoint.py
+git commit -m "feat(skills): 新增报告写作 Skill"
+```
+
+---
+
+### 126. docs: 更新设计文档与部署/面试说明
+
+- **提交时间**：2026-07-26 16:05
+- **说明**：设计文档同步记忆治理与 MCP 接入设计；部署文档补充 MCP Server 配置与启动说明；面试叙事更新 Agent 编排演进口径；四篇指标测试文档更新（API 与异步索引/multiagent/工具治理/检索）对齐最新实现与实测口径。
+- **变更文件**：`docs/KnowFlow-项目设计文档.md`、`docs/deployment.md`、`docs/interview_story.md`、`docs/tests/指标测试-API与异步索引.md`、`docs/tests/指标测试-multiagent.md`、`docs/tests/指标测试-工具治理.md`、`docs/tests/指标测试-检索.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-26T16:05:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-26T16:05:00+08:00"
+git add docs/KnowFlow-项目设计文档.md docs/deployment.md docs/interview_story.md docs/tests/
+git commit -m "docs: 更新设计文档与部署/面试说明"
+```
+
+---
+
+### 127. docs: 移除简历写作文档
+
+- **提交时间**：2026-07-26 19:22
+- **说明**：删除 docs/resume_writing.md（简历写法内容已并入面试叙事与设计文档口径，避免双源漂移）。
+- **变更文件**：`docs/resume_writing.md`（删除）
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-26T19:22:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-26T19:22:00+08:00"
+git add docs/resume_writing.md
+git commit -m "docs: 移除简历写作文档"
+```
