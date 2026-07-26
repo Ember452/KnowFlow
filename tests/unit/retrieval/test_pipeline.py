@@ -5,6 +5,7 @@
 """
 
 import threading
+import time
 from typing import Any
 
 import pytest
@@ -15,7 +16,13 @@ from knowflow.retrieval.bm25_store import BM25Doc
 from knowflow.retrieval.entity_extractor import Entity as ExtractedEntity
 from knowflow.retrieval.entity_extractor import ExtractResult
 from knowflow.retrieval.graph_store import GraphStore
-from knowflow.retrieval.pipeline import IndexDeps, IndexError, IndexResult, RetrievalPipeline
+from knowflow.retrieval.pipeline import (
+    _EXTRACT_CONCURRENCY,
+    IndexDeps,
+    IndexError,
+    IndexResult,
+    RetrievalPipeline,
+)
 from knowflow.retrieval.vector_store import ChunkVector
 
 
@@ -84,6 +91,27 @@ class ThreadTrackingExtractor(FakeEntityExtractor):
         return self.result
 
 
+class ConcurrencyTrackingExtractor(FakeEntityExtractor):
+    """记录 extract 最大并发数, 用于验证并发抽取与信号量限流."""
+
+    def __init__(self, delay: float = 0.05) -> None:
+        super().__init__()
+        self.delay = delay  # 模拟 LLM 调用耗时, 放大并发窗口
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+
+    def extract(self, chunk_text: str) -> ExtractResult:
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        time.sleep(self.delay)
+        with self._lock:
+            self.active -= 1
+        self.calls += 1
+        return self.result
+
+
 class FakeVectorStore:
     """Fake vector store, 记录 upsert/delete 调用."""
 
@@ -115,6 +143,16 @@ class FakeBM25Store:
         return 0
 
 
+class FakeRetrievalCache:
+    """Fake retrieval cache, 记录 clear_prefix 调用次数."""
+
+    def __init__(self) -> None:
+        self.clear_calls = 0
+
+    async def clear_prefix(self, prefix: str = "knowflow:retrieval:") -> None:
+        self.clear_calls += 1
+
+
 def _make_deps(
     db_session: Any,
     *,
@@ -123,6 +161,7 @@ def _make_deps(
     extractor: FakeEntityExtractor | None = None,
     vector_store: FakeVectorStore | None = None,
     bm25_store: FakeBM25Store | None = None,
+    retrieval_cache: FakeRetrievalCache | None = None,
 ) -> tuple[IndexDeps, FakeEmbeddingClient, FakeEntityExtractor, FakeVectorStore, FakeBM25Store]:
     """构造 IndexDeps, 返回 deps + 各 fake 引用(便于断言)."""
     embedding = embedding or FakeEmbeddingClient()
@@ -141,6 +180,7 @@ def _make_deps(
         entity_extractor=extractor,  # type: ignore[arg-type]
         minio_client=minio,
         bucket="test-bucket",
+        retrieval_cache=retrieval_cache,  # type: ignore[arg-type]
     )
     return deps, embedding, extractor, vector_store, bm25_store
 
@@ -226,6 +266,42 @@ async def test_index_document_failed_status(db_session: Any) -> None:
     assert updated is not None
     assert updated.status == "failed"
     assert "minio download failed" in (updated.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_index_document_clears_retrieval_cache(db_session: Any) -> None:
+    """索引成功后失效全部检索缓存(知识库已变更, 不得返回过期结果)."""
+    doc_repo = DocumentRepo(db_session)
+    doc = await doc_repo.create(
+        title="cache", source_uri="cache.txt", file_type="txt", size_bytes=50
+    )
+    await db_session.commit()
+
+    cache = FakeRetrievalCache()
+    minio = FakeMinio(b"Cache invalidation content. Fresh document.")
+    deps, *_ = _make_deps(db_session, minio=minio, retrieval_cache=cache)
+    pipeline = RetrievalPipeline(deps)
+
+    await pipeline.index_document(doc.id)
+
+    assert cache.clear_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_index_document_failed_keeps_retrieval_cache(db_session: Any) -> None:
+    """索引失败时不失效缓存(知识库未变更)."""
+    doc_repo = DocumentRepo(db_session)
+    doc = await doc_repo.create(title="fail", source_uri="fail.txt", file_type="txt", size_bytes=10)
+    await db_session.commit()
+
+    cache = FakeRetrievalCache()
+    deps, *_ = _make_deps(db_session, minio=FailingMinio(b""), retrieval_cache=cache)
+    pipeline = RetrievalPipeline(deps)
+
+    with pytest.raises(IndexError):
+        await pipeline.index_document(doc.id)
+
+    assert cache.clear_calls == 0
 
 
 @pytest.mark.asyncio
@@ -315,6 +391,31 @@ async def test_index_document_extract_runs_in_thread(db_session: Any) -> None:
     # 断言 extract 在事件循环线程之外执行(asyncio.to_thread 生效)
     assert extractor.exec_thread_id is not None
     assert extractor.exec_thread_id != threading.get_ident()
+    updated = await doc_repo.get(doc.id)
+    assert updated is not None
+    assert updated.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_index_document_extract_concurrent_limited(db_session: Any) -> None:
+    """实体抽取并发执行且被信号量限流(1 < 并发 <= _EXTRACT_CONCURRENCY)."""
+    doc_repo = DocumentRepo(db_session)
+    doc = await doc_repo.create(
+        title="concurrent", source_uri="c.txt", file_type="txt", size_bytes=5000
+    )
+    await db_session.commit()
+
+    # 长文本触发多 chunk(默认 chunk_size=512, 5000 字符约 10 块, 远超并发度)
+    extractor = ConcurrencyTrackingExtractor(delay=0.05)
+    minio = FakeMinio(b"Knowledge base paragraph. " * 200)
+    deps, *_ = _make_deps(db_session, minio=minio, extractor=extractor)
+    pipeline = RetrievalPipeline(deps)
+
+    await pipeline.index_document(doc.id)
+
+    assert extractor.calls >= 5  # 确认确实产生了多块
+    assert extractor.max_active > 1  # 并发抽取生效
+    assert extractor.max_active <= _EXTRACT_CONCURRENCY  # 信号量限流生效
     updated = await doc_repo.get(doc.id)
     assert updated is not None
     assert updated.status == "ready"

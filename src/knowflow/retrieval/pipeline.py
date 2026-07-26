@@ -31,12 +31,16 @@ from knowflow.core.logging import get_logger
 from knowflow.db.repositories.document_repo import ChunkRepo, DocumentIndexRepo, DocumentRepo
 from knowflow.models.document import Chunk
 from knowflow.retrieval.bm25_store import BM25Doc, BM25Store
+from knowflow.retrieval.cache import RetrievalCache
 from knowflow.retrieval.embedding import EmbeddingClient
-from knowflow.retrieval.entity_extractor import EntityExtractor
+from knowflow.retrieval.entity_extractor import EntityExtractor, ExtractResult
 from knowflow.retrieval.graph_store import GraphStore
 from knowflow.retrieval.vector_store import ChunkVector, VectorStore
 
 logger = get_logger(__name__)
+
+# 实体抽取并发度: LLM API 调用并发上限, 防限流的同时把串行等待变为并行
+_EXTRACT_CONCURRENCY = 4
 
 
 class IndexError(AppError):
@@ -75,6 +79,7 @@ class IndexDeps:
     bucket: str = ""
     parse_fn: Callable[..., str] | None = None
     split_fn: Callable[..., list[str]] | None = None
+    retrieval_cache: RetrievalCache | None = None  # 索引成功后失效检索缓存(可注入 fake)
 
 
 class RetrievalPipeline:
@@ -92,6 +97,8 @@ class RetrievalPipeline:
         self._chunk_overlap = settings.chunk_overlap
         self._bucket = deps.bucket or settings.minio_bucket
         self._token_counter = TokenCounter()
+        # 索引成功会改变检索结果, 必须失效旧缓存, 否则返回过期结果
+        self._retrieval_cache = deps.retrieval_cache or RetrievalCache()
 
     async def index_document(self, doc_id: int) -> IndexResult:
         """索引单个文档.
@@ -159,13 +166,21 @@ class RetrievalPipeline:
                 # 将bm25索引文档写入应用程序内存中
                 self.deps.bm25_store.add_batch(bm25_docs)
 
-            # 5. 逐块: 实体抽取 + 图谱写入
+            # 5. 并发实体抽取(信号量限流), 抽取结果按 chunk 顺序对齐
+            extract_sem = asyncio.Semaphore(_EXTRACT_CONCURRENCY)
+
+            async def _extract_chunk(content: str) -> ExtractResult:
+                """单块实体抽取: 同步 LLM 调用移入线程池, 信号量限制并发."""
+                async with extract_sem:
+                    return await asyncio.to_thread(self.deps.entity_extractor.extract, content)
+
+            extracts = await asyncio.gather(*(_extract_chunk(c.content) for c in chunk_orms))
+
+            # 5.1 顺序写库: 实体名称-ID映射依赖跨块累积顺序
             total_entities = 0
             total_relations = 0
             all_name_to_id: dict[str, int] = {}  # 实体名称-数据库ID映射
-            for chunk in chunk_orms:
-                # 同步 LLM 调用移入线程池: 避免 API 挂起时阻塞 worker 事件循环
-                extract = await asyncio.to_thread(self.deps.entity_extractor.extract, chunk.content)
+            for chunk, extract in zip(chunk_orms, extracts, strict=True):
                 if extract.entities:
                     orm_ents = await self.deps.graph_store.upsert_entities(
                         doc_id, chunk.id, extract.entities
@@ -186,6 +201,9 @@ class RetrievalPipeline:
                 )
             await self.deps.document_repo.update_status(doc_id, "ready")
             await self.deps.session.commit()
+
+            # 7. 文档已变更, 失效全部检索缓存(Redis 不可用时降级 no-op, 不阻塞索引)
+            await self._retrieval_cache.clear_prefix()
 
             duration_ms = (time.perf_counter() - start) * 1000
             return IndexResult(
