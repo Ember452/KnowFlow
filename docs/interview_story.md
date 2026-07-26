@@ -54,14 +54,17 @@ A：静态模式 33 个场景，验证"预期工具在隔离后的可见集中"�
 **Q：Skill 之间可以依赖吗？循环依赖怎么办？**
 A：可以，dependencies 声明，dependency_resolver 拓扑排序；循环依赖检测到直接抛错拒绝加载。
 
-## 三、Multi-Agent 编排（指标：并发 -77.6%）
+## 三、Multi-Agent 编排（指标：并发 -77.6%，子 Agent 工具化）
 
 ### 故事线
 
-- 痛点：复杂任务（对比 A/B/C）串行执行慢
+- 痛点：复杂任务（对比 A/B/C、写报告、多主题调研）串行执行慢；子 Agent 若只是"换个 prompt 再调一次 LLM"，多 Agent 就没有存在价值
 - 方案：LangGraph 状态机（understand → plan → delegate → execute → summarize），主 Agent 规划拆解，子 Agent 独立上下文并发执行
+- **子 Agent 工具化（核心亮点）**：子 Agent 复用 ToolOrchestrator 以 SUBAGENT 角色跑工具循环——`subagent_only` 域工具（code_review / report_writing 技能）仅子 Agent 可见，主 Agent 看不到也调不到；规划 prompt 注入子 Agent 可用工具清单，主 Agent 据此拆出"能被执行"的任务
+- 子任务按需检索：各子任务用自己的文本检索知识库，不共享主 Agent 预检索上下文（跨主题不串扰）
+- 可观测：子 Agent 每次工具调用以 tool_start/tool_end 事件经 SSE 上抛（带 subtask_id 标注来源），前端可见"哪个子 Agent 调了什么工具"；工具调用记录随 SubtaskInfo 落库
 - 并发：asyncio.gather + 超时（60s）+ 降级（单子失败不阻塞）
-- checkpoint：**站在 LangGraph 肩上**用 PostgresSaver 原生表（ADR 0004），thread_id = run_id，lineage 沿 parent_checkpoint_id 回溯，断点续跑
+- checkpoint：站在 LangGraph 肩上用 PostgresSaver 原生表（ADR 0004），thread_id = run_id，lineage 沿 parent_checkpoint_id 回溯，断点续跑
 - 效果：并发较串行耗时下降均值 **65.6%**（最佳 84.1%），目标 ≥60%
 
 ### 追问与应答
@@ -69,17 +72,26 @@ A：可以，dependencies 声明，dependency_resolver 拓扑排序；循环依�
 **Q：为什么用 LangGraph 而不是自己写状态机？**
 A：状态机模型（节点 + 条件路由）天然适配多步推理；原生 checkpoint 支持断点续跑，序列化协议（channel versions/writes）是成熟实现，自己写容易出错（ADR 0004 的 Context 部分有完整论证）。
 
+**Q：子 Agent 和主 Agent 的区别？只是多调一次 LLM 吗？**
+A：不是。子 Agent 以 SUBAGENT 角色跑完整工具循环：可见 subagent_only 域工具集（主 Agent 不可见）、独立检索上下文、独立 system prompt（工具型提示词）、工具调用经 on_tool 上抛可观测。执行域隔离的 subagent_only 域就是为这个设计的——注入的工具随角色变化，同一套 Skill 体系同时约束主/子两方。
+
+**Q：主 Agent 怎么知道子 Agent 能干什么？**
+A：规划 prompt 注入子 Agent 可见工具清单（ToolOrchestrator.visible_tools_text 按 SUBAGENT 角色计算），主 Agent 据此拆任务——工具不可达的需求不会拆成子任务，避免"拆了也干不了"。
+
+**Q：子 Agent 工具调用怎么展示？**
+A：SSE 事件流逐条转发 tool_start/tool_end（含 subtask_id），前端可区分事件来自哪个子 Agent；同时记录在子任务结果里，会话 replay 可见。
+
 **Q：子 Agent 之间上下文隔离怎么做？**
-A：子 Agent 只看自己的任务描述 + 共享预检索上下文，不注入主 Agent 完整历史；各自挂独立 ContextManager 实例（窗口/预算策略互不影响）。
+A：子 Agent 只看自己的任务描述 + 按需检索结果，不注入主 Agent 完整历史；各自挂独立 ContextManager 实例（窗口/预算策略互不影响）。
 
 **Q：断点续跑演示过吗？**
 A：有（docs/demo_checkpoint.md）：kill 进程后以同一 thread_id + checkpoint_id 调 graph.ainvoke，LangGraph 恢复 channel 状态继续执行；委派里程碑 checkpoint 存在 task_delegations.checkpoint_id 可精确定位。
 
 **Q：子任务失败了怎么办？**
-A：降级——单子失败标记 failed 不阻塞其他子任务，汇总时如实标注"该部分未能获取"；主 run 仍 completed。
+A：降级——单子失败标记 failed 不阻塞其他子任务，汇总时如实标注"该部分未能获取"；主 run 仍 completed。子 Agent 输出还有质量门禁（<20 字符视为无效）+ 携带原因重试 1 次。
 
 **Q：为什么 2 子任务场景下降只有 42.5%，不到 77.6%？**
-A：77.6% 是目标值，均值 65.6% 达标（≥60%）。子任务数越多并发收益越接近理论值（8 子任务 84.1%），2 子任务时调度开销占比高。**诚实说明**：静态模式是模拟延迟，真实模式受 LLM 网络波动影响。
+A：77.6% 是目标值，均值 65.6% 达标（≥60%）。子任务数越多并发收益越接近理论值（8 子任务 84.1%），2 子任务时调度开销占比高。**诚实说明**：静态模式是模拟延迟，真实模式受 LLM 网络波动影响；子 Agent 工具化链路（真实 LLM + 真实工具调用）按测试文档执行后更新。
 
 ## 四、上下文工程与记忆（可讲深的加分点）
 

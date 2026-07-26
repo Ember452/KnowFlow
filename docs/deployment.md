@@ -119,6 +119,23 @@ CD 流水线（`.github/workflows/cd.yml`）在 main 合并后自动构建并推
 | 上下文 | `KNOWFLOW_CONTEXT_BUDGET_TOKENS/SPILL_THRESHOLD_TOKENS/WINDOW_MAX_TURNS` |
 | 队列 | `KNOWFLOW_TASK_STREAM_INDEX/DLQ/CONSUMER_*` |
 | Agent | `KNOWFLOW_AGENT_TIMEOUT_SECONDS/MAX_SUBTASKS` |
+| MCP | `KNOWFLOW_MCP_SERVERS`（JSON 数组，声明 stdio MCP Server，见 3.1） |
+
+### 3.1 MCP 与 Skill 接入（自主扩展）
+
+平台支持用户零代码接入外部工具与技能，均为**启动时注册**（改配置/加文件后重启生效）：
+
+**MCP Server**：在 `.env` 配置 `KNOWFLOW_MCP_SERVERS`（JSON 数组），每项声明一个 stdio 协议 Server：
+
+```json
+KNOWFLOW_MCP_SERVERS=[{"id": "filesystem", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem"], "domain": "skill_only"}]
+```
+
+- `id` 逻辑名（工具名前缀 `mcp_<id>_*`）；`command`/`args` 为 Server 启动命令；`domain` 决定执行域（`direct` 恒可见 / `skill_only` 需 Skill 激活 / `subagent_only` 仅子 Agent 可见）
+- 启动时自动连接 Server → `list_tools` 拉取工具清单 → 适配器包装为本地工具注册进统一注册表，与内置工具同等接受执行域治理与调用追踪
+- 单个 Server 连接失败仅告警降级，不阻塞启动；改配置后需重启生效
+
+**Skill**：在 `skills/<名称>/SKILL.md` 以 YAML frontmatter 声明（`name/description/domain/tools/dependencies/enabled`），重启后自动加载；运行时可 `PUT /api/v1/skills/{name}/toggle` 启停。注意 Skill 只声明工具的组织方式，引用的工具必须已在注册表（内置工具或 MCP 接入的工具）。
 
 ## 四、常见问题
 

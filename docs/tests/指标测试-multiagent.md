@@ -1,10 +1,10 @@
 # M7 · Multi-Agent 编排 — 指标/验收测试文档
 
 > 按 AGENTS.md 2.2 节要求编写。编排核心逻辑(状态机路由/委派协议/并发执行/checkpoint
-> 序列化与 lineage)已在 `tests/unit/agents` 自动验证(44 个用例, 全部离线可测);
+> 序列化与 lineage/子 Agent 工具化)已在 `tests/unit/agents` 自动验证(51 个用例, 全部离线可测);
 > 并发较串行耗时下降已由 `scripts/benchmark_multiagent.py` 静态模式自动实测
 > (docs/benchmarks/multiagent_20260807.md, 均值 65.8% 达标);
-> 真实 LLM 委派链路、断点续跑两项验收需真实服务, 交由用户实测后回填。
+> 真实 LLM 委派链路、断点续跑、子 Agent 真实工具调用三项验收需真实服务, 交由用户实测后回填。
 
 ---
 
@@ -32,8 +32,8 @@ docker compose ps          # postgres / milvus / redis / minio 均 healthy
 uv run python scripts/init_db.py          # 建库 + 迁移(0002 已删除旧 checkpoints 表)
 uv run ruff check src/ tests/ scripts/ worker/    # 0 errors
 uv run mypy src/ worker/                  # 0 errors
-uv run pytest tests/unit -q               # 全绿(524 passed)
-uv run pytest tests/unit/agents -q        # M7 专项 44 用例
+uv run pytest tests/unit -q               # 全绿
+uv run pytest tests/unit/agents -q        # M7 专项 51 用例(含子 Agent 工具化)
 uv run python scripts/benchmark_multiagent.py     # 并发较串行下降 >= 60%
 ```
 
@@ -56,6 +56,9 @@ curl http://localhost:8000/api/v1/readyz     # 期望 deps 全 ok
 > 编排链路随 chat 端点启用(依赖齐备时自动装配): 复杂任务(规则判 complex,
 > 如含"对比/分别/汇总"等信号词)走 LangGraph 状态机 → 主 Agent LLM 规划 →
 > 并发委派子 Agent → 汇总; 简单问答直连检索链路, 不受影响。
+> 子 Agent 工具化: 注入 ToolOrchestrator 后, 子 Agent 以 SUBAGENT 角色跑工具循环,
+> 可见 subagent_only 域工具(code_review / report_writing 技能, 主 Agent 不可见);
+> 依赖 skills/ 目录 5 个 Skill 正常加载(SkillManager 自动装配)。
 
 ---
 
@@ -129,6 +132,19 @@ uv run python scripts/benchmark_multiagent.py --report
 - **预期**: 均值 >= 60%(目标 77.6%); 报告写入 docs/benchmarks/multiagent_2026xxxx.md。
 - 真实模式(可选, LLM + PG 齐备时): `uv run python scripts/benchmark_multiagent.py --mode real`。
 
+### 用例 7: 子 Agent 工具调用(核心验收, 流式)
+
+```bash
+curl.exe -s -N -X POST http://localhost:8000/api/v1/chat/stream -H "Content-Type: application/json" `
+  -d '{"user_id":"demo","message":"对比 A/B 产品的价格参数, 并撰写一份简短对比报告"}'
+```
+
+- **预期**: SSE 事件流出现 `tool_start` / `tool_end` 事件且带 `subtask_id` 字段
+  (标注工具调用来自哪个子 Agent); 数据库 task_delegations 结果含工具调用记录;
+  子 Agent 可调用 subagent_only 域工具(如 report_writing 技能链: 检索 + 计算 + 文件写出),
+  主 Agent 对话中看不到这些工具(可在 /api/v1/skills 验证 report_writing/code_review 仅子 Agent 可见)。
+- 验证 Skill 数量: `GET /api/v1/skills` 返回 5 个(report_writing 为新增)。
+
 ---
 
 ## 四、结果记录表(待用户实测回填)
@@ -141,6 +157,7 @@ uv run python scripts/benchmark_multiagent.py --report
 | 4 失败降级 | | | |
 | 5 断点续跑 | | | |
 | 6 并发耗时下降 | | 静态模式已自动记录 | docs/benchmarks/multiagent_20260807.md |
+| 7 子 Agent 工具调用 | | | 需真实 LLM + 工具服务 |
 
 > 用户按本文档实测后, 将结果表/截图反馈给 AI; AI 将实测数据写入
 > docs/benchmarks/multiagent_2026xxxx.md 并保留本文档作为证据。

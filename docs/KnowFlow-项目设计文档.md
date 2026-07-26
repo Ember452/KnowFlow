@@ -1,29 +1,27 @@
 # KnowFlow 项目设计文档
 
 > 可编排、可扩展的企业知识库 Agent 平台
-> 版本：v2.0 ｜ 更新：2026-08-05 ｜ Python 3.13 + uv
+> 版本：v2.0 ｜ 更新：2026-08-10 ｜ Python 3.13 + uv
 
 ---
 
 ## 一、简历写法
 
-**KnowFlow —— 可编排、可扩展的企业知识库 Agent 平台** ｜ 核心开发者 ｜ 2026.04-2026.07
+**KnowFlow —— 企业知识库 Agent 平台** ｜ 独立开发 ｜ 2026.04 - 2026.07
 
-Python / FastAPI / LangGraph / LangChain / MCP / Milvus / PostgreSQL / MinIO / Redis
+Python 3.13 / FastAPI / LangGraph / LangChain / MCP / Milvus / PostgreSQL / Redis / MinIO
 
-企业级知识库 Agent 平台，围绕检索增强、工具治理、多 Agent 协同三大核心能力，解决知识问答中跨文档关联、工具调用膨胀、复杂任务编排与上下文溢出四个工程问题。
+面向企业内部异构文档的知识问答与任务自动化场景，独立设计并实现完整 Agent 平台，解决跨文档检索、工具注入膨胀、复杂任务编排、长会话上下文四大问题；覆盖"文档解析 → 混合检索 → 工具调用 → 多 Agent 编排 → 评测"全链路，内置 6 类工具、5 个 Skill、771 个单测，核心指标全部脚本实测可复现。
 
-- GraphRAG 检索：LLM 抽取文档实体与关系存入 PostgreSQL 实体关系表，检索阶段向量 + BM25 Hybrid 召回后，基于实体一跳关联扩展召回跨文档 chunk，reranker 精排，相对 Hybrid baseline 提升 8% Recall@10。
+- 多 Agent 编排：实现复杂任务（竞品调研、报告撰写、多主题分析）自动拆解与子 Agent 并行执行，环节互不干扰；单环节失败自动降级不阻塞整体，进程中断后可从断点续跑；端到端耗时较串行下降均值 65.6%（8 任务并行最佳 84.1%）
 
-- 工具治理：设计 Skill 声明式加载与依赖开关机制，按 Skill 激活状态动态注入关联工具；四类执行域分级隔离模型可见工具，单轮可见工具数降 34.2%，Tool Schema Token 降 32.6%，Function Calling 准确率 94+%。
+- 安全高效的工具治理：针对工具 Schema 全量注入导致成本上升、FC 准确率下降的问题，设计按 Skill 激活状态动态裁剪模型可见工具集；实测可见工具数降 43.4%、Schema Token 降 45.2%、FC 准确率 100%（33 场景）；新工具声明式注册零侵入，依赖拓扑自动解析、循环依赖拒绝加载
 
-- Multi-Agent 编排：主 Agent 负责任务规划与结果汇总，子 Agent 子线程隔离上下文执行委派任务；checkpoint 记录父子关系支持断点续跑，多独立子任务并发执行可观测追踪。
+- MCP 工具生态接入：基于 MCP 2.0 SDK 实现 stdio 协议工具网关，远程工具经适配器统一适配为本地工具接入统一注册表，自动纳入执行域隔离体系；内置 demo Server 独立子进程真实协议往返，覆盖"注册→治理→隔离→调用→降级"全链路，连接失败降级告警不阻塞对话
 
-- 上下文工程：超阈值工具调用结果自动卸载至沙盒文件系统并以引用替换，滑动窗口 + 动态摘要控制上下文长度；跨会话长期记忆按语义相关度召回并经 LLM 压缩注入，与上下文策略联动。
+- GraphRAG 混合检索：针对纯向量检索跨文档关联查询召回差的问题，设计向量 + BM25 双路召回经 RRF 融合，LLM 抽取实体关系建图谱，一跳扩展解决跨文档关联召回；选用 PostgreSQL 单表 JOIN 而非图数据库；50 条标注查询评测中跨文档查询 MRR 提升至 0.87
 
-- 沙盒文件系统：基于 MinIO 构建会话级隔离 workspace，仅向模型暴露虚拟路径受控文件工具，承载文件读写与工具结果卸载，防止 Agent 越权访问宿主文件系统。
-
-- 流式与可观测：SSE 流式响应实时回显 LLM 推理与工具调用进度，全链路 Trace 记录 Agent 决策、工具调用与检索召回链路，支持会话 replay 与离线评测。
+- 记忆与上下文治理：搭建"短期 → 重要性筛选 → 压缩 → 长期"四级记忆管线，每 5 轮自动沉淀、语义去重防冗余、冲突检测留痕待审且不阻断写入；上下文按 token 预算分级，超长工具结果卸载进沙盒仅注入引用、可经工具读回，长会话不丢数据
 
 ---
 
@@ -274,7 +272,7 @@ enabled: true
 
 #### 模块三：Multi-Agent 编排（agents/）
 
-**核心机制**：主 Agent 规划 → task 委派 → 子 Agent 子线程隔离 → 并发执行 → checkpoint 父子关系 → 结果汇总
+**核心机制**：主 Agent 规划（注入子 Agent 可用工具清单）→ task 委派 → 子 Agent 子线程隔离（SUBAGENT 角色工具循环）→ 并发执行 → checkpoint 父子关系 → 结果汇总
 
 **LangGraph 状态机设计**：
 
@@ -294,18 +292,20 @@ START → understand → plan → [delegate?] → execute → summarize → END
 
 `MainAgent`：
 - `understand(query)` → 理解用户意图
-- `plan(query)` → 任务规划（是否需要委派、委派给几个子 Agent）
+- `plan(query)` → 任务规划（是否需要委派、委派给几个子 Agent）；prompt 注入子 Agent 可用工具清单，避免拆出工具不可达的任务
 - `delegate(subtasks)` → 创建 TaskDelegation，委派给子 Agent
 - `summarize(results)` → 汇总子 Agent 结果
 
 `Subagent`：
 - `execute(task)` → 子线程隔离上下文执行任务
 - 独立 ContextManager 实例，与主 Agent 上下文隔离
+- 注入 ToolOrchestrator 后以 SUBAGENT 角色跑工具循环：subagent_only 域工具（如 code_review / report_writing）仅子 Agent 可见，工具调用经 on_tool 回调上抛（标注 subtask_id）可观测，调用记录随子任务结果返回
 
 `Orchestrator`：
 - `run_concurrent(subtasks)` → asyncio.gather 并发执行多个子 Agent
 - 超时控制、降级策略（单个子 Agent 失败不阻塞整体）
 - 结果聚合
+- 子任务按需检索：各子任务用自己的文本检索知识库，不共享主 Agent 预检索上下文（跨主题不串扰）；检索失败/无结果回退共享上下文
 
 `CheckpointManager`：
 - `save(state, parent_checkpoint_id)` → 序列化 AgentState + 记录父子关系
