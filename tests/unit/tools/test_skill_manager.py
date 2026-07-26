@@ -22,8 +22,8 @@ def manager() -> SkillManager:
 
 
 def test_loads_four_skills(manager: SkillManager) -> None:
-    """项目 skills/ 下有 4 个 Skill."""
-    assert len(manager) == 4
+    """项目 skills/ 下有 5 个 Skill."""
+    assert len(manager) == 5
 
 
 def test_get_existing(manager: SkillManager) -> None:
@@ -45,9 +45,16 @@ def test_get_missing_returns_none(manager: SkillManager) -> None:
 def test_list_returns_all(manager: SkillManager) -> None:
     """list 返回全部 Skill 的 SkillInfo."""
     infos = manager.list()
-    assert len(infos) == 4
+    assert len(infos) == 5
     names = {i.name for i in infos}
-    assert {"knowledge_qa", "document_summary", "data_analysis", "code_review"} <= names
+    expected = {
+        "knowledge_qa",
+        "document_summary",
+        "data_analysis",
+        "code_review",
+        "report_writing",
+    }
+    assert expected <= names
     # 初始全部 enabled
     assert all(i.enabled for i in infos)
 
@@ -97,7 +104,7 @@ def test_active_skills_excludes_disabled(manager: SkillManager) -> None:
     active = manager.active_skills()
     names = {s.name for s in active}
     assert "knowledge_qa" not in names
-    assert len(active) == 3
+    assert len(active) == 4
 
 
 def test_active_skills_syncs_enabled_flag(manager: SkillManager) -> None:

@@ -151,10 +151,17 @@ def test_load_dir_empty(tmp_path: Path) -> None:
 
 
 def test_load_dir_real_skills() -> None:
-    """加载项目真实 skills/ 目录的 4 个 SKILL.md."""
+    """加载项目真实 skills/ 目录的 5 个 SKILL.md."""
     skills = SkillLoader().load_dir("skills")
-    assert len(skills) == 4
+    assert len(skills) == 5
     names = {s.name for s in skills}
-    assert {"knowledge_qa", "document_summary", "data_analysis", "code_review"} <= names
+    expected = {
+        "knowledge_qa",
+        "document_summary",
+        "data_analysis",
+        "code_review",
+        "report_writing",
+    }
+    assert expected <= names
     # 全部默认 enabled
     assert all(s.enabled for s in skills)
