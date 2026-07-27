@@ -20,7 +20,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
-        description="企业知识库 Agent 平台 - GraphRAG + 工具治理 + Multi-Agent 编排",
+        description="企业知识库 Agent 平台 - 混合检索 + 工具治理 + Multi-Agent 编排",
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",

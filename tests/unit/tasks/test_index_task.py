@@ -15,8 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from knowflow.db.repositories.document_repo import ChunkRepo, DocumentIndexRepo, DocumentRepo
 from knowflow.models import Base
 from knowflow.retrieval.bm25_store import BM25Doc
-from knowflow.retrieval.entity_extractor import ExtractResult
-from knowflow.retrieval.graph_store import GraphStore
 from knowflow.retrieval.pipeline import IndexDeps
 from knowflow.retrieval.vector_store import ChunkVector
 from knowflow.tasks.index_task import handle_index_task
@@ -38,11 +36,6 @@ class _FakeEmbedding:
 
     def embed_one(self, text: str) -> list[float]:
         return [float(len(text)), 0.0]
-
-
-class _FakeExtractor:
-    def extract(self, chunk_text: str) -> ExtractResult:
-        return ExtractResult()
 
 
 class _FakeVectorStore:
@@ -82,11 +75,9 @@ def _build_deps_factory(minio: _FakeMinio) -> Any:
             document_repo=DocumentRepo(session),
             chunk_repo=ChunkRepo(session),
             document_index_repo=DocumentIndexRepo(session),
-            graph_store=GraphStore(session),
             vector_store=_FakeVectorStore(),
             bm25_store=_FakeBM25Store(),
             embedding_client=_FakeEmbedding(),
-            entity_extractor=_FakeExtractor(),
             minio_client=minio,
             bucket="b",
         )

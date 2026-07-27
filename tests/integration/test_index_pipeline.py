@@ -1,6 +1,6 @@
 """索引全链路集成测试 - HTTP 上传 → 投递任务 → worker 消费 → 文档转 ready.
 
-不依赖真实容器: get_db 用 SQLite, MinIO/Embedding/VectorStore/BM25/Extractor 用 fake,
+不依赖真实容器: get_db 用 SQLite, MinIO/Embedding/VectorStore/BM25 用 fake,
 broker 用 FakeBroker 捕获任务, 再调 handle_index_task 模拟 worker 消费.
 真实容器(真实 Milvus/LLM/MinIO)的端到端验收见 docs/tests/指标测试-API与异步索引.md.
 """
@@ -17,8 +17,6 @@ from knowflow.api import deps
 from knowflow.db.repositories.document_repo import ChunkRepo, DocumentIndexRepo, DocumentRepo
 from knowflow.main import create_app
 from knowflow.retrieval.bm25_store import BM25Doc
-from knowflow.retrieval.entity_extractor import ExtractResult
-from knowflow.retrieval.graph_store import GraphStore
 from knowflow.retrieval.pipeline import IndexDeps
 from knowflow.retrieval.vector_store import ChunkVector
 from knowflow.tasks.index_task import handle_index_task
@@ -31,11 +29,6 @@ class _FakeEmbedding:
 
     def embed_one(self, text: str) -> list[float]:
         return [float(len(text)), 0.0]
-
-
-class _FakeExtractor:
-    def extract(self, chunk_text: str) -> ExtractResult:
-        return ExtractResult()
 
 
 class _FakeVectorStore:
@@ -60,11 +53,9 @@ def _build_deps(session: AsyncSession, minio: Any) -> IndexDeps:
         document_repo=DocumentRepo(session),
         chunk_repo=ChunkRepo(session),
         document_index_repo=DocumentIndexRepo(session),
-        graph_store=GraphStore(session),
         vector_store=_FakeVectorStore(),
         bm25_store=_FakeBM25Store(),
         embedding_client=_FakeEmbedding(),
-        entity_extractor=_FakeExtractor(),
         minio_client=minio,
         bucket="b",
     )

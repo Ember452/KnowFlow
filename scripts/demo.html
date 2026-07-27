@@ -184,14 +184,6 @@
     border-radius: 50%; animation: spin .8s linear infinite; display: inline-block;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  /* ── 图谱页 ── */
-  #graphSvg { width: 100%; height: 560px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-  #graphSvg .node { cursor: pointer; }
-  #graphSvg .node circle { fill: var(--primary); transition: all .15s; }
-  #graphSvg .node text { font-size: 11px; fill: var(--text); pointer-events: none; }
-  #graphSvg .edge { stroke: var(--border); stroke-width: 1.2; }
-  #graphSvg .edge.hl { stroke: var(--primary); stroke-width: 2; }
-  #graphSvg .node.hl circle { fill: var(--primary-dark); r: 13; }
   /* ── 树形（Agent/Trace） ── */
   .tree-node { margin-left: 18px; border-left: 1px solid var(--border); padding-left: 10px; }
   .tree-item { padding: 4px 0; font-size: 12.5px; }
@@ -247,7 +239,6 @@
 <nav id="tabNav">
   <button data-tab="chat" class="active">对话</button>
   <button data-tab="knowledge">知识库</button>
-  <button data-tab="graph">知识图谱</button>
   <button data-tab="tools">工具治理</button>
   <button data-tab="memory">记忆</button>
   <button data-tab="obs">可观测</button>
@@ -308,28 +299,13 @@
       <div id="docList"><div class="empty">加载中…</div></div>
     </div>
     <div class="card">
-      <h3>检索测试 <span class="muted">GraphRAG 混合检索（向量 + BM25 → RRF → 一跳扩展 → 精排）</span></h3>
+      <h3>检索测试 <span class="muted">混合检索（向量 + BM25 → RRF → 精排）</span></h3>
       <div class="row">
         <input type="text" id="searchBox" style="flex:1" placeholder="输入查询，如：张三负责什么项目">
         <select id="searchTopK"><option>5</option><option selected>10</option><option>20</option></select>
         <button class="btn" id="searchBtn">检索</button>
       </div>
       <div id="searchResult"></div>
-    </div>
-  </section>
-
-  <!-- ══ 知识图谱 ══ -->
-  <section id="tab-graph" class="tab">
-    <div class="card">
-      <div class="toolbar">
-        <h3 style="margin:0">知识图谱 <span class="muted" id="graphMeta"></span></h3>
-        <span class="spacer"></span>
-        <span class="muted">实体</span>
-        <select id="graphLimit"><option>100</option><option selected>200</option><option>500</option></select>
-        <button class="btn ghost" id="graphRefresh">加载</button>
-      </div>
-      <div class="legend" id="graphLegend"></div>
-      <svg id="graphSvg" viewBox="0 0 1000 560"></svg>
     </div>
   </section>
 

@@ -4,8 +4,8 @@ Revision ID: 0001
 Revises:
 Create Date: 2026-08-05
 
-创建 22 张表, 覆盖 document/graph/session/agent/tool/memory/trace/eval 全部模型.
-表结构对齐设计文档 3.4 与 src/knowflow/models/ 定义.
+创建 19 张表, 覆盖 document/session/agent/tool/memory/trace/eval 全部模型.
+表结构对齐设计文档与 src/knowflow/models/ 定义.
 """
 
 import sqlalchemy as sa
@@ -83,7 +83,7 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("doc_id", sa.BigInteger(), nullable=False),
         sa.Column("chunk_id", sa.BigInteger(), nullable=True),
-        sa.Column("index_type", sa.String(length=32), nullable=False, comment="vector/graph/bm25"),
+        sa.Column("index_type", sa.String(length=32), nullable=False, comment="vector/bm25"),
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column(
             "created_at",
@@ -102,66 +102,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("idx_doc_indexes_doc", "document_indexes", ["doc_id"])
-
-    # ── 图谱(entities/entity_aliases/relations) ──
-    op.create_table(
-        "entities",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("doc_id", sa.BigInteger(), nullable=False),
-        sa.Column("chunk_id", sa.BigInteger(), nullable=False),
-        sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("entity_type", sa.String(length=64), nullable=False, comment="person/org/..."),
-        sa.Column("normalized", sa.String(length=255), nullable=False, comment="归一化名称"),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.ForeignKeyConstraint(["doc_id"], ["documents.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["chunk_id"], ["chunks.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("idx_entities_normalized", "entities", ["normalized"])
-    op.create_index("idx_entities_chunk", "entities", ["chunk_id"])
-
-    op.create_table(
-        "entity_aliases",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("entity_id", sa.BigInteger(), nullable=False),
-        sa.Column("alias", sa.String(length=255), nullable=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.ForeignKeyConstraint(["entity_id"], ["entities.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("entity_id", "alias", name="uq_entity_alias"),
-    )
-
-    op.create_table(
-        "relations",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("doc_id", sa.BigInteger(), nullable=False),
-        sa.Column("source_entity_id", sa.BigInteger(), nullable=False),
-        sa.Column("target_entity_id", sa.BigInteger(), nullable=False),
-        sa.Column("relation_type", sa.String(length=64), nullable=False, comment="belongs_to/..."),
-        sa.Column("confidence", sa.Float(), nullable=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.ForeignKeyConstraint(["doc_id"], ["documents.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["source_entity_id"], ["entities.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["target_entity_id"], ["entities.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("idx_relations_source", "relations", ["source_entity_id"])
-    op.create_index("idx_relations_target", "relations", ["target_entity_id"])
 
     # ── 会话(sessions/messages/turns) ──
     op.create_table(
@@ -565,9 +505,6 @@ def downgrade() -> None:
         "turns",
         "messages",
         "sessions",
-        "relations",
-        "entity_aliases",
-        "entities",
         "document_indexes",
         "chunks",
         "documents",

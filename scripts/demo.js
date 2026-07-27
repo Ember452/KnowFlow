@@ -1,6 +1,6 @@
 'use strict';
 /* KnowFlow 轻量演示前端 · 零依赖原生 JS（配合 demo.html）
-   覆盖：SSE 对话 / 检索引用 / 工具调用 / 知识库 / 图谱 / 工具治理 / 记忆 / 可观测 / 评测 / Agent / 会话历史 */
+   覆盖：SSE 对话 / 检索引用 / 工具调用 / 知识库 / 工具治理 / 记忆 / 可观测 / 评测 / Agent / 会话历史 */
 
 /* ─────────────────── 工具函数 ─────────────────── */
 const $ = (sel) => document.querySelector(sel);
@@ -382,7 +382,7 @@ async function doSearch() {
   const topK = +$('#searchTopK').value;
   $('#searchResult').innerHTML = '<div class="empty"><span class="spinner"></span> 检索中…</div>';
   try {
-    const d = await api('/knowledge/search', { method: 'POST', body: { query: q, top_k: topK, with_expand: true, with_rerank: true } });
+    const d = await api('/knowledge/search', { method: 'POST', body: { query: q, top_k: topK, with_rerank: true } });
     if (!d?.chunks?.length) { $('#searchResult').innerHTML = '<div class="empty">无检索命中</div>'; return; }
     $('#searchResult').innerHTML = `
       <div class="muted" style="margin-bottom:8px">命中 ${d.total} 条 · 延迟 ${(d.latency_ms ?? 0).toFixed(0)}ms ${d.cache_hit ? '· 缓存命中' : ''}</div>` +
@@ -395,105 +395,6 @@ async function doSearch() {
   } catch (e) {
     $('#searchResult').innerHTML = `<div class="empty">检索失败：${esc(e.message)}</div>`;
   }
-}
-
-/* ─────────────────── 知识图谱模块（轻量力导向 SVG） ─────────────────── */
-const ENTITY_COLORS = { person: '#c96442', org: '#3d7ea6', product: '#6a8f3d', tech: '#8a5fa6', project: '#c98a2d', other: '#8a857d' };
-
-async function loadGraph() {
-  const limit = +$('#graphLimit').value;
-  $('#graphMeta').textContent = '加载中…';
-  try {
-    const d = await api(`/knowledge/graph?limit=${limit}`);
-    const nodes = d?.nodes || [], edges = d?.edges || [];
-    $('#graphMeta').textContent = `实体 ${d?.total ?? nodes.length} · 关系 ${edges.length}`;
-    if (!nodes.length) { $('#graphSvg').innerHTML = '<text x="500" y="280" text-anchor="middle" style="fill:var(--muted)">图谱为空（需先上传文档并完成实体抽取索引）</text>'; return; }
-    const types = [...new Set(nodes.map((n) => n.entity_type || 'other'))];
-    $('#graphLegend').innerHTML = types.map((t) => `<span><i style="background:${ENTITY_COLORS[t] || '#8a857d'}"></i>${esc(t)}</span>`).join('');
-    renderGraph(nodes, edges);
-  } catch (e) {
-    $('#graphMeta').textContent = '加载失败';
-    $('#graphSvg').innerHTML = `<text x="500" y="280" text-anchor="middle" style="fill:var(--err)">图谱加载失败：${esc(e.message)}</text>`;
-  }
-}
-
-function renderGraph(nodes, edges) {
-  const W = 1000, H = 560;
-  const pos = new Map();
-  const speed = nodes.length > 250 ? 90 : 260; // 节点多时减少迭代保证流畅
-  nodes.forEach((n, i) => pos.set(n.id, {
-    x: W / 2 + Math.cos(i * 2.399) * (W / 3.2), y: H / 2 + Math.sin(i * 2.399) * (H / 3.2), vx: 0, vy: 0,
-  }));
-  for (let iter = 0; iter < speed; iter++) {
-    for (const a of nodes) for (const b of nodes) {
-      if (a.id >= b.id) continue;
-      const pa = pos.get(a.id), pb = pos.get(b.id);
-      let dx = pb.x - pa.x, dy = pb.y - pa.y;
-      const d2 = dx * dx + dy * dy || 1;
-      const d = Math.sqrt(d2);
-      const f = Math.min(1800 / d2, 0.6); // 斥力
-      dx /= d; dy /= d;
-      pa.vx -= dx * f; pa.vy -= dy * f;
-      pb.vx += dx * f; pb.vy += dy * f;
-    }
-    for (const e of edges) {
-      const pa = pos.get(e.source), pb = pos.get(e.target);
-      if (!pa || !pb) continue;
-      const dx = pb.x - pa.x, dy = pb.y - pa.y;
-      const d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const f = (d - 70) * 0.004; // 弹簧：目标边长 70
-      pa.vx += (dx / d) * f; pa.vy += (dy / d) * f;
-      pb.vx -= (dx / d) * f; pb.vy -= (dy / d) * f;
-    }
-    for (const n of nodes) {
-      const p = pos.get(n.id);
-      p.vx += (W / 2 - p.x) * 0.002; p.vy += (H / 2 - p.y) * 0.002; // 中心引力
-      p.vx *= 0.82; p.vy *= 0.82; // 阻尼
-      p.x += p.vx; p.y += p.vy;
-    }
-  }
-  // 坐标归一化到 viewBox
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  nodes.forEach((n) => {
-    const p = pos.get(n.id);
-    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-  });
-  const sx = (W - 80) / (maxX - minX || 1), sy = (H - 80) / (maxY - minY || 1);
-  const scale = Math.min(sx, sy, 1.2);
-  const ox = (W - (maxX - minX) * scale) / 2 - minX * scale;
-  const oy = (H - (maxY - minY) * scale) / 2 - minY * scale;
-  const px = (id) => pos.get(id).x * scale + ox;
-  const py = (id) => pos.get(id).y * scale + oy;
-
-  const adj = new Map();
-  edges.forEach((e) => {
-    adj.set(e.source, [...(adj.get(e.source) || []), e.target]);
-    adj.set(e.target, [...(adj.get(e.target) || []), e.source]);
-  });
-  const svg = $('#graphSvg');
-  svg.innerHTML =
-    edges.map((e) => `<line class="edge" x1="${px(e.source)}" y1="${py(e.source)}" x2="${px(e.target)}" y2="${py(e.target)}" data-s="${e.source}" data-t="${e.target}"></line>`).join('') +
-    nodes.map((n) => {
-      const p = pos.get(n.id);
-      return `<g class="node" data-id="${n.id}" transform="translate(${p.x * scale + ox},${p.y * scale + oy})">
-        <circle r="9" fill="${ENTITY_COLORS[n.entity_type] || '#8a857d'}"></circle>
-        <text y="20" text-anchor="middle">${esc(n.name)}</text></g>`;
-    }).join('');
-  // 悬停高亮邻居
-  svg.querySelectorAll('.node').forEach((g) => {
-    g.addEventListener('mouseenter', () => {
-      const id = +g.dataset.id;
-      const nb = adj.get(id) || [];
-      svg.querySelectorAll('.node').forEach((x) => x.classList.toggle('hl', +x.dataset.id === id || nb.includes(+x.dataset.id)));
-      svg.querySelectorAll('.edge').forEach((x) => x.classList.toggle('hl', +x.dataset.s === id || +x.dataset.t === id));
-    });
-    g.addEventListener('mouseleave', () => { svg.querySelectorAll('.node,.edge').forEach((x) => x.classList.remove('hl')); });
-    g.addEventListener('click', () => {
-      const n = nodes.find((x) => x.id === +g.dataset.id);
-      if (n) toast(`实体 ${n.name} · 类型 ${n.entity_type || '-'} · chunk #${n.chunk_id}`);
-    });
-  });
 }
 
 /* ─────────────────── 工具治理模块 ─────────────────── */
@@ -806,10 +707,6 @@ function bindEvents() {
     if (btn) docAction(btn.dataset.act, +btn.dataset.id);
   });
 
-  // 图谱
-  $('#graphRefresh').addEventListener('click', loadGraph);
-  $('#graphLimit').addEventListener('change', loadGraph);
-
   // 工具治理
   $('#skillList').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-skill]');
@@ -854,7 +751,6 @@ function init() {
   loadMemory();
   loadObsStats();
   loadSessions();
-  loadGraph();
   setInterval(() => { if (document.visibilityState === 'visible') checkConn(); }, 30000); // 每 30s 自动刷新连接状态
 }
 

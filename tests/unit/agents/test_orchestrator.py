@@ -87,7 +87,6 @@ class FakeRetriever:
         query: str,
         *,
         top_k: int | None = None,
-        with_expand: bool = True,
         with_rerank: bool = True,
     ) -> RetrievalResult:
         self.queries.append(query)

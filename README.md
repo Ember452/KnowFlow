@@ -1,13 +1,13 @@
 # KnowFlow
 
-> 企业知识库 Agent 平台：GraphRAG 检索 + 工具治理 + Multi-Agent 编排。
+> 企业知识库 Agent 平台：混合检索 + 工具治理 + Multi-Agent 编排。
 > 面向 Agent 开发岗位的真实可运行项目 —— 五个核心指标全部有实测数据支撑。
 
 ## 项目简介
 
 KnowFlow 是一个可编排、可扩展的企业知识库 Agent 平台，覆盖从**文档索引 → 混合检索 → 工具调用 → 多 Agent 任务编排 → 全链路可观测**的完整闭环：
 
-- **GraphRAG 检索**：向量 + BM25 双路召回（RRF 融合）、实体关系图谱一跳扩展、cross-encoder 精排
+- **混合检索**：向量 + BM25 双路召回（RRF 融合）、本地 reranker 精排、向量异常自动降级 BM25
 - **工具治理与 Skill 体系**：四类执行域隔离（direct/skill_only/subagent_only/internal）、可见工具数下降 43.4%、Schema Token 下降 45.2%
 - **Multi-Agent 编排**：LangGraph 状态机（understand → plan → delegate → execute → summarize）、asyncio 并发委派（较串行耗时下降 65.6%）、checkpoint 断点续跑
 - **上下文工程与记忆**：token 预算/窗口/摘要/卸载策略、Redis 短期记忆 + PG 长期记忆分层
@@ -33,14 +33,14 @@ KnowFlow 是一个可编排、可扩展的企业知识库 Agent 平台，覆盖�
 └──┬──────────┬──────────┬──────────┬──────────┬───────────────┘
    │          │          │          │          │
 ┌──▼──┐   ┌───▼───┐  ┌───▼────┐ ┌───▼────┐ ┌───▼────────┐
-│Graph│   │工具治理│  │上下文  │ │沙盒    │ │流式+可观测 │
-│RAG  │   │模块   │  │工程    │ │文件系统│ │+记忆       │
-│检索 │   │       │  │模块    │ │模块    │ │模块        │
+│混合  │   │工具治理│  │上下文  │ │沙盒    │ │流式+可观测 │
+│检索  │   │模块   │  │工程    │ │文件系统│ │+记忆       │
+│模块  │   │       │  │模块    │ │模块    │ │模块        │
 └──┬──┘   └───┬───┘  └───┬────┘ └───┬────┘ └───┬────────┘
    │          │          │          │          │
 ┌──▼──────────▼──────────▼──────────▼──────────▼───────────────┐
 │                        存储层                                 │
-│  Milvus(向量) · PostgreSQL(图谱+业务) · MinIO(文件)           │
+│  Milvus(向量) · PostgreSQL(业务) · MinIO(文件)           │
 │  Redis(会话+记忆)                                            │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -52,7 +52,7 @@ KnowFlow 是一个可编排、可扩展的企业知识库 Agent 平台，覆盖�
 | 语言/包管理 | Python 3.13 + uv |
 | Web | FastAPI + SSE 流式 |
 | Agent | LangGraph + LangChain |
-| 检索 | Milvus（向量）+ PostgreSQL（图谱）+ BM25 + cross-encoder 精排 |
+| 检索 | Milvus（向量）+ BM25 + 本地 reranker 精排 |
 | 存储 | PostgreSQL / Redis / MinIO |
 | 工具协议 | MCP（Model Context Protocol） |
 

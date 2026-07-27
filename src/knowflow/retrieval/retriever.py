@@ -1,20 +1,17 @@
-"""GraphRAG 检索统一入口 - 编排 hybrid -> expand -> rerank -> cache 完整链路.
+"""混合检索统一入口 - 编排 hybrid -> rerank -> cache 完整链路.
 
-流程: cache.get -> miss 时 hybrid_search.search(top_k*2) -> expander.expand ->
+流程: cache.get -> miss 时 hybrid_search.search(top_k*2) ->
 reranker.rerank(top_k) -> cache.set -> 返回 RetrievalResult.
 """
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowflow.core.logging import get_logger
 from knowflow.db.repositories.document_repo import ChunkRepo, DocumentRepo
 from knowflow.retrieval.cache import RetrievalCache
-from knowflow.retrieval.expander import Expander
 from knowflow.retrieval.hybrid_search import ChunkScore, HybridSearch
 from knowflow.retrieval.reranker import Reranker
 
@@ -43,14 +40,13 @@ class RetrievalResult:
     cache_hit: bool = False
 
 
-class GraphRAGRetriever:
-    """GraphRAG 检索器. 编排完整检索链路."""
+class HybridRetriever:
+    """混合检索器. 编排 hybrid 召回 + reranker 精排 + 缓存链路."""
 
     def __init__(
         self,
         session_factory: Any,
         hybrid_search: HybridSearch,
-        expander_factory: Callable[[AsyncSession], Expander],
         reranker: Reranker,
         cache: RetrievalCache,
     ) -> None:
@@ -59,14 +55,11 @@ class GraphRAGRetriever:
         Args:
             session_factory: 异步 session factory(可调用, 返回 AsyncSession).
             hybrid_search: 混合检索器.
-            expander_factory: 一跳扩展器工厂, 接收每次检索的 AsyncSession 返回 Expander.
-                扩展器需访问 DB, 必须使用调用方提供的 session, 而非构造时持有的过期 session.
             reranker: 精排器.
             cache: 检索缓存.
         """
         self._session_factory = session_factory
         self._hybrid_search = hybrid_search
-        self._expander_factory = expander_factory
         self._reranker = reranker
         self._cache = cache
 
@@ -75,7 +68,6 @@ class GraphRAGRetriever:
         query: str,
         *,
         top_k: int | None = None,
-        with_expand: bool = True,
         with_rerank: bool = True,
     ) -> RetrievalResult:
         """执行完整检索链路.
@@ -83,7 +75,6 @@ class GraphRAGRetriever:
         Args:
             query: 查询文本.
             top_k: 返回条数, None 时取 settings.retrieval_top_k.
-            with_expand: 是否启用一跳扩展.
             with_rerank: 是否启用 reranker 精排.
 
         Returns:
@@ -99,11 +90,9 @@ class GraphRAGRetriever:
 
         # 1. 缓存查询
         # 如果缓存中命中,直接返回缓存中的chunk和查询时间
-        # key 由 query + 检索参数(top_k/with_expand/with_rerank) 共同决定,
+        # key 由 query + 检索参数(top_k/with_rerank) 共同决定,
         # 避免参数不一致的请求命中彼此缓存返回错误结果
-        cached = await self._cache.get(
-            query, top_k=top_k, with_expand=with_expand, with_rerank=with_rerank
-        )
+        cached = await self._cache.get(query, top_k=top_k, with_rerank=with_rerank)
         if cached is not None:
             # 缓存命中: 直接返回(需要从 DB 取 chunk 内容)
             chunks = await self._fetch_chunks(cached)
@@ -119,7 +108,7 @@ class GraphRAGRetriever:
         # 在Milvus中存储向量, id docxid
         # 在Redis中存储的是chunkID, Score, Source
 
-        # 2. Hybrid 召回(取 top_k*2 候选, 给 expand/rerank 留余量)
+        # 2. Hybrid 召回(取 top_k*2 候选, 给 rerank 留余量)
         # 进行向量检索和BM25双路召回2topK,得到RRF融合后的结果topK
         # RRF 的逻辑是1/(k+rank), 其中k是RRF参数, rank是召回结果的排名,因为不同召回系统的量不同
         # 平滑参数的作用,放大差距
@@ -127,19 +116,7 @@ class GraphRAGRetriever:
         candidate_k = top_k * 2
         hits = self._hybrid_search.search(query, candidate_k)
 
-        # 3. 一跳扩展
-        # 首先收集所有命中chunk的entry_ids,取出相关联的chunkIds,
-        # 将已经在原hits中的chunk去重。进行结果拼接,hits+chunk(score=0, source="expand")
-        if with_expand and hits:
-            # expander 需要 AsyncSession, 从 factory 取, 并按该 session 构造 expander
-            session: AsyncSession = await self._get_session()
-            try:
-                expander = self._expander_factory(session)
-                hits = await expander.expand(hits)
-            finally:
-                await session.close()
-
-        # 4. Reranker 精排
+        # 3. Reranker 精排
         if with_rerank and hits:
             session = await self._get_session()
             try:
@@ -150,17 +127,15 @@ class GraphRAGRetriever:
             finally:
                 await session.close()
 
-        # 截断到 top_k(expand 后可能超过)
+        # 截断到 top_k
         hits = hits[:top_k]
 
-        # 5. 取 chunk 内容
+        # 4. 取 chunk 内容
         # 在这里根据文档的docids,获取引用出处
         chunks = await self._fetch_chunks(hits)
 
-        # 6. 写缓存
-        await self._cache.set(
-            query, hits, top_k=top_k, with_expand=with_expand, with_rerank=with_rerank
-        )
+        # 5. 写缓存
+        await self._cache.set(query, hits, top_k=top_k, with_rerank=with_rerank)
 
         latency_ms = (time.perf_counter() - start) * 1000
         return RetrievalResult(

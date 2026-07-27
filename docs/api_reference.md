@@ -25,7 +25,7 @@ curl http://localhost:8000/api/v1/healthz
 | POST | `/api/v1/documents/{doc_id}/reindex` | 重新索引 |
 
 ```bash
-# 上传并触发异步索引（worker 消费后完成分块/embedding/图谱入库）
+# 上传并触发异步索引（worker 消费后完成分块/embedding/向量与 BM25 入库）
 curl -X POST http://localhost:8000/api/v1/documents/upload -F "file=@corpus.md"
 # {"doc_id": 1, "status": "indexing", "message": "已入队"}
 ```
@@ -34,7 +34,7 @@ curl -X POST http://localhost:8000/api/v1/documents/upload -F "file=@corpus.md"
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/v1/knowledge/search` | 知识库检索（GraphRAG 全链路） |
+| POST | `/api/v1/knowledge/search` | 知识库检索（混合检索全链路） |
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/knowledge/search \
@@ -52,7 +52,7 @@ curl -X POST http://localhost:8000/api/v1/knowledge/search \
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat -H "Content-Type: application/json" \
   -d '{"user_id": "demo", "message": "员工年假制度是什么？"}'
-# {"session_id": "1", "answer": "入职满 1 年享有 5 天年假，满 3 年享有 10 天...",
+# {"session_id": 1, "answer": "入职满 1 年享有 5 天年假，满 3 年享有 10 天...",
 #  "citations": [{"chunk_id": 3, "content": "...", "score": 0.91, "source": "hybrid"}],
 #  "tool_calls": [], "latency_ms": 892}
 ```

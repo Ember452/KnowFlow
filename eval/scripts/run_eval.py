@@ -3,7 +3,7 @@
 静态模式(默认): 不依赖真实 LLM/Milvus/PG, 用关键词匹配的 fake retriever +
     拼接上下文的 fake LLM 跑通全流程, 生成报告模板(标注"静态模拟, 非实测").
 真实模式(--mode real): 需要 PG/Milvus/Redis/MinIO + LLM API Key,
-    由真实 GraphRAGRetriever 与 ChatLLM 跑完整评测.
+    由真实 HybridRetriever 与 ChatLLM 跑完整评测.
 
 用法:
     uv run python eval/scripts/run_eval.py              # 静态模式(默认)

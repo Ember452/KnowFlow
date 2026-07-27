@@ -4,7 +4,7 @@
 - index: 首次索引(文档刚上传)
 - reindex: 重建索引(先清理向量/BM25/chunks 再索引)
 
-依赖外部单例: PG session factory / MinIO / Milvus / Embedding / EntityExtractor /
+依赖外部单例: PG session factory / MinIO / Milvus / Embedding /
 BM25Store(启动时从 chunks 表全量加载). 进程内增量写入不跨进程同步, 重启后恢复一致.
 """
 
@@ -19,8 +19,6 @@ from knowflow.core.logging import get_logger
 from knowflow.db.repositories.document_repo import ChunkRepo, DocumentIndexRepo, DocumentRepo
 from knowflow.retrieval.bm25_store import get_bm25_store
 from knowflow.retrieval.embedding import get_embedding_client
-from knowflow.retrieval.entity_extractor import EntityExtractor
-from knowflow.retrieval.graph_store import GraphStore
 from knowflow.retrieval.pipeline import IndexDeps, IndexError, RetrievalPipeline
 from knowflow.retrieval.vector_store import VectorStore
 
@@ -38,11 +36,9 @@ def build_index_deps(session: AsyncSession) -> IndexDeps:
         document_repo=DocumentRepo(session),
         chunk_repo=ChunkRepo(session),
         document_index_repo=DocumentIndexRepo(session),
-        graph_store=GraphStore(session),
         vector_store=VectorStore(),
         bm25_store=get_bm25_store(),
         embedding_client=get_embedding_client(),
-        entity_extractor=EntityExtractor(),
         minio_client=_get_minio_sync(),
         bucket=settings.minio_bucket,
     )
@@ -84,7 +80,6 @@ async def handle_index_task(payload: dict[str, Any], build_deps: DepsFactory) ->
                 task=task,
                 doc_id=doc_id,
                 chunks=result.chunk_count,
-                entities=result.entity_count,
             )
             return {"ok": True, "retryable": False, "doc_id": int(doc_id), "result": result}
         except NotFoundError as exc:

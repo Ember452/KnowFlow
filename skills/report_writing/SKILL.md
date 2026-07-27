@@ -26,7 +26,7 @@ enabled: true
 
 ## 工具链
 
-1. `retrieval_tool`：GraphRAG 检索（向量 + BM25 混合召回 + 一跳扩展 + 精排）
+1. `retrieval_tool`：混合检索（向量 + BM25 双路召回 + RRF 融合 + 精排）
 2. `calculator`：安全数学表达式求值（数据口径计算）
 3. `file_read_tool`：读取沙盒中已有素材
 4. `file_write_tool`：报告成稿写入沙盒

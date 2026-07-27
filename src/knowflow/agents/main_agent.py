@@ -37,7 +37,7 @@ _WEAK_COMPLEX_KEYWORDS = ("有哪些",)
 # 多候选分隔符: >=2 次分隔视为多个并列对象(判 complex), 恰好 1 次判 uncertain
 _CANDIDATE_SPLITTERS = ("、", "/", "和", "与", "vs", "VS")
 
-# JSON 代码块包裹剥离(与 entity_extractor 同款容错)
+# JSON 代码块包裹剥离(与 LLM JSON 解析同款容错)
 _CODE_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 _MAX_PLAN_RETRIES = 2

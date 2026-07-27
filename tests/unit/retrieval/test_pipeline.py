@@ -1,11 +1,9 @@
 """Pipeline 单测 - 验证索引编排链路: 状态机流转、各组件调用、异常路径、reindex.
 
-使用 db_session fixture(SQLite 内存库)跑真实 DocumentRepo/ChunkRepo/DocumentIndexRepo/GraphStore,
-外部依赖(MinIO/Embedding/EntityExtractor/VectorStore/BM25Store)用 fake 注入.
+使用 db_session fixture(SQLite 内存库)跑真实 DocumentRepo/ChunkRepo/DocumentIndexRepo,
+外部依赖(MinIO/Embedding/VectorStore/BM25Store)用 fake 注入.
 """
 
-import threading
-import time
 from typing import Any
 
 import pytest
@@ -13,11 +11,7 @@ import pytest
 from knowflow.core.exceptions import NotFoundError
 from knowflow.db.repositories.document_repo import ChunkRepo, DocumentIndexRepo, DocumentRepo
 from knowflow.retrieval.bm25_store import BM25Doc
-from knowflow.retrieval.entity_extractor import Entity as ExtractedEntity
-from knowflow.retrieval.entity_extractor import ExtractResult
-from knowflow.retrieval.graph_store import GraphStore
 from knowflow.retrieval.pipeline import (
-    _EXTRACT_CONCURRENCY,
     IndexDeps,
     IndexError,
     IndexResult,
@@ -59,57 +53,6 @@ class FakeEmbeddingClient:
 
     def embed_one(self, text: str) -> list[float]:
         return self.embed([text])[0]
-
-
-class FakeEntityExtractor:
-    """Fake entity extractor, 返回预设结果."""
-
-    def __init__(self, result: ExtractResult | None = None) -> None:
-        self.result = result or ExtractResult()
-        self.calls = 0
-
-    def extract(self, chunk_text: str) -> ExtractResult:
-        self.calls += 1
-        return self.result
-
-
-class ThreadTrackingExtractor(FakeEntityExtractor):
-    """记录 extract 执行线程 id, 用于验证同步 LLM 调用已移入线程池."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            result=ExtractResult(
-                entities=[ExtractedEntity(name="Hello", type="concept", normalized="hello")],
-                relations=[],
-            )
-        )
-        self.exec_thread_id: int | None = None
-
-    def extract(self, chunk_text: str) -> ExtractResult:
-        self.exec_thread_id = threading.get_ident()
-        self.calls += 1
-        return self.result
-
-
-class ConcurrencyTrackingExtractor(FakeEntityExtractor):
-    """记录 extract 最大并发数, 用于验证并发抽取与信号量限流."""
-
-    def __init__(self, delay: float = 0.05) -> None:
-        super().__init__()
-        self.delay = delay  # 模拟 LLM 调用耗时, 放大并发窗口
-        self.active = 0
-        self.max_active = 0
-        self._lock = threading.Lock()
-
-    def extract(self, chunk_text: str) -> ExtractResult:
-        with self._lock:
-            self.active += 1
-            self.max_active = max(self.max_active, self.active)
-        time.sleep(self.delay)
-        with self._lock:
-            self.active -= 1
-        self.calls += 1
-        return self.result
 
 
 class FakeVectorStore:
@@ -158,14 +101,12 @@ def _make_deps(
     *,
     minio: FakeMinio,
     embedding: FakeEmbeddingClient | None = None,
-    extractor: FakeEntityExtractor | None = None,
     vector_store: FakeVectorStore | None = None,
     bm25_store: FakeBM25Store | None = None,
     retrieval_cache: FakeRetrievalCache | None = None,
-) -> tuple[IndexDeps, FakeEmbeddingClient, FakeEntityExtractor, FakeVectorStore, FakeBM25Store]:
+) -> tuple[IndexDeps, FakeEmbeddingClient, FakeVectorStore, FakeBM25Store]:
     """构造 IndexDeps, 返回 deps + 各 fake 引用(便于断言)."""
     embedding = embedding or FakeEmbeddingClient()
-    extractor = extractor or FakeEntityExtractor()
     vector_store = vector_store or FakeVectorStore()
     bm25_store = bm25_store or FakeBM25Store()
     deps = IndexDeps(
@@ -173,21 +114,19 @@ def _make_deps(
         document_repo=DocumentRepo(db_session),
         chunk_repo=ChunkRepo(db_session),
         document_index_repo=DocumentIndexRepo(db_session),
-        graph_store=GraphStore(db_session),
         vector_store=vector_store,  # type: ignore[arg-type]
         bm25_store=bm25_store,  # type: ignore[arg-type]
         embedding_client=embedding,  # type: ignore[arg-type]
-        entity_extractor=extractor,  # type: ignore[arg-type]
         minio_client=minio,
         bucket="test-bucket",
         retrieval_cache=retrieval_cache,  # type: ignore[arg-type]
     )
-    return deps, embedding, extractor, vector_store, bm25_store
+    return deps, embedding, vector_store, bm25_store
 
 
 @pytest.mark.asyncio
 async def test_index_document_success(db_session: Any) -> None:
-    """索引成功: 状态 pending -> indexing -> ready, chunks/向量/BM25/实体全部写入."""
+    """索引成功: 状态 pending -> indexing -> ready, chunks/向量/BM25 全部写入."""
     doc_repo = DocumentRepo(db_session)
     doc = await doc_repo.create(
         title="test", source_uri="test.txt", file_type="txt", size_bytes=100
@@ -196,16 +135,7 @@ async def test_index_document_success(db_session: Any) -> None:
 
     content = b"Hello world. This is a test document for indexing."
     minio = FakeMinio(content)
-    deps, embedding, _extractor, vector_store, bm25_store = _make_deps(
-        db_session,
-        minio=minio,
-        extractor=FakeEntityExtractor(
-            result=ExtractResult(
-                entities=[ExtractedEntity(name="Hello", type="concept", normalized="hello")],
-                relations=[],
-            )
-        ),
-    )
+    deps, embedding, vector_store, bm25_store = _make_deps(db_session, minio=minio)
     pipeline = RetrievalPipeline(deps)
 
     result = await pipeline.index_document(doc.id)
@@ -213,8 +143,6 @@ async def test_index_document_success(db_session: Any) -> None:
     assert isinstance(result, IndexResult)
     assert result.doc_id == doc.id
     assert result.chunk_count >= 1
-    assert result.entity_count == 1
-    assert result.relation_count == 0
     # 状态: ready
     updated = await doc_repo.get(doc.id)
     assert updated is not None
@@ -233,7 +161,7 @@ async def test_index_document_success(db_session: Any) -> None:
     # 索引状态记录
     idx_repo = DocumentIndexRepo(db_session)
     indexes = await idx_repo.list_by_doc(doc.id)
-    assert {i.index_type for i in indexes} == {"vector", "graph", "bm25"}
+    assert {i.index_type for i in indexes} == {"vector", "bm25"}
     assert all(i.status == "ready" for i in indexes)
 
 
@@ -318,7 +246,7 @@ async def test_reindex_document_clears_and_reindexes(db_session: Any) -> None:
 
     content = b"New content for reindex. Completely different."
     minio = FakeMinio(content)
-    deps, _, _, vector_store, bm25_store = _make_deps(db_session, minio=minio)
+    deps, _, vector_store, bm25_store = _make_deps(db_session, minio=minio)
     pipeline = RetrievalPipeline(deps)
 
     result = await pipeline.reindex_document(doc.id)
@@ -331,91 +259,6 @@ async def test_reindex_document_clears_and_reindexes(db_session: Any) -> None:
     assert vector_store.deleted_docs == [doc.id]
     assert bm25_store.deleted_docs == [doc.id]
     # 状态: ready
-    updated = await doc_repo.get(doc.id)
-    assert updated is not None
-    assert updated.status == "ready"
-
-
-@pytest.mark.asyncio
-async def test_index_document_with_relations(db_session: Any) -> None:
-    """索引含实体与关系: 多 chunk 间关系正确写入."""
-    doc_repo = DocumentRepo(db_session)
-    doc = await doc_repo.create(
-        title="relations", source_uri="rel.txt", file_type="txt", size_bytes=200
-    )
-    await db_session.commit()
-
-    # 长文本触发多 chunk
-    content = b"Alice works in Engineering. Bob works in Sales. They collaborate on Project X."
-
-    def fake_extract(chunk_text: str) -> ExtractResult:
-        return ExtractResult(
-            entities=[
-                ExtractedEntity(name="Alice", type="person", normalized="alice"),
-                ExtractedEntity(name="Bob", type="person", normalized="bob"),
-            ],
-            relations=[
-                # relations 引用的 source/target 用 name, pipeline 会映射到 id
-            ],
-        )
-
-    extractor = FakeEntityExtractor()
-    extractor.extract = fake_extract  # type: ignore[method-assign]
-
-    minio = FakeMinio(content)
-    deps, _, _, _, _ = _make_deps(db_session, minio=minio, extractor=extractor)
-    pipeline = RetrievalPipeline(deps)
-
-    result = await pipeline.index_document(doc.id)
-
-    assert result.entity_count > 0
-    updated = await doc_repo.get(doc.id)
-    assert updated is not None
-    assert updated.status == "ready"
-
-
-@pytest.mark.asyncio
-async def test_index_document_extract_runs_in_thread(db_session: Any) -> None:
-    """实体抽取的同步 LLM 调用在独立线程执行, 不阻塞事件循环."""
-    doc_repo = DocumentRepo(db_session)
-    doc = await doc_repo.create(title="thread", source_uri="t.txt", file_type="txt", size_bytes=50)
-    await db_session.commit()
-
-    extractor = ThreadTrackingExtractor()
-    minio = FakeMinio(b"Hello world. Thread test content.")
-    deps, *_ = _make_deps(db_session, minio=minio, extractor=extractor)
-    pipeline = RetrievalPipeline(deps)
-
-    await pipeline.index_document(doc.id)
-
-    # 断言 extract 在事件循环线程之外执行(asyncio.to_thread 生效)
-    assert extractor.exec_thread_id is not None
-    assert extractor.exec_thread_id != threading.get_ident()
-    updated = await doc_repo.get(doc.id)
-    assert updated is not None
-    assert updated.status == "ready"
-
-
-@pytest.mark.asyncio
-async def test_index_document_extract_concurrent_limited(db_session: Any) -> None:
-    """实体抽取并发执行且被信号量限流(1 < 并发 <= _EXTRACT_CONCURRENCY)."""
-    doc_repo = DocumentRepo(db_session)
-    doc = await doc_repo.create(
-        title="concurrent", source_uri="c.txt", file_type="txt", size_bytes=5000
-    )
-    await db_session.commit()
-
-    # 长文本触发多 chunk(默认 chunk_size=512, 5000 字符约 10 块, 远超并发度)
-    extractor = ConcurrencyTrackingExtractor(delay=0.05)
-    minio = FakeMinio(b"Knowledge base paragraph. " * 200)
-    deps, *_ = _make_deps(db_session, minio=minio, extractor=extractor)
-    pipeline = RetrievalPipeline(deps)
-
-    await pipeline.index_document(doc.id)
-
-    assert extractor.calls >= 5  # 确认确实产生了多块
-    assert extractor.max_active > 1  # 并发抽取生效
-    assert extractor.max_active <= _EXTRACT_CONCURRENCY  # 信号量限流生效
     updated = await doc_repo.get(doc.id)
     assert updated is not None
     assert updated.status == "ready"

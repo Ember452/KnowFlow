@@ -27,28 +27,11 @@ def test_search_validates_empty_query(client: TestClient) -> None:
 
 
 def test_search_passes_flags(client: TestClient) -> None:
-    """with_expand/with_rerank 透传给 retriever."""
+    """with_rerank 透传给 retriever."""
     retriever = FakeRetriever(chunks=[])
     deps.set_retriever(retriever)
     client.post(
         "/api/v1/knowledge/search",
-        json={"query": "q", "with_expand": False, "with_rerank": False},
+        json={"query": "q", "with_rerank": False},
     )
-    assert retriever.calls[0]["with_expand"] is False
     assert retriever.calls[0]["with_rerank"] is False
-
-
-def test_graph_empty_db_returns_empty(client: TestClient) -> None:
-    """空库时图谱接口返回空节点与空边."""
-    resp = client.get("/api/v1/knowledge/graph")
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert data["nodes"] == []
-    assert data["edges"] == []
-    assert data["total"] == 0
-
-
-def test_graph_validates_limit(client: TestClient) -> None:
-    """limit 超上限返回 422."""
-    resp = client.get("/api/v1/knowledge/graph", params={"limit": 5000})
-    assert resp.status_code == 422

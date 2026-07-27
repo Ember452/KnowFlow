@@ -9,7 +9,7 @@ import pytest
 from knowflow.retrieval.hybrid_search import ChunkScore
 from knowflow.retrieval.retriever import (
     ChunkWithScore,
-    GraphRAGRetriever,
+    HybridRetriever,
     RetrievalResult,
 )
 
@@ -62,18 +62,6 @@ class FakeHybridSearch:
         return self.hits
 
 
-class FakeExpander:
-    """fake Expander."""
-
-    def __init__(self, expanded: list[ChunkScore]) -> None:
-        self.expanded = expanded
-        self.expand_calls: int = 0
-
-    async def expand(self, hits: list[ChunkScore]) -> list[ChunkScore]:
-        self.expand_calls += 1
-        return self.expanded
-
-
 class FakeReranker:
     """fake Reranker."""
 
@@ -92,19 +80,18 @@ class FakeCache:
     def __init__(self, cached: list[ChunkScore] | None = None) -> None:
         self._cached = cached
         self.get_calls: int = 0
-        self.get_args: list[tuple[str, int, bool, bool]] = []
-        self.set_calls: list[tuple[str, int, bool, bool, list[ChunkScore]]] = []
+        self.get_args: list[tuple[str, int, bool]] = []
+        self.set_calls: list[tuple[str, int, bool, list[ChunkScore]]] = []
 
     async def get(
         self,
         query: str,
         *,
         top_k: int,
-        with_expand: bool,
         with_rerank: bool,
     ) -> list[ChunkScore] | None:
         self.get_calls += 1
-        self.get_args.append((query, top_k, with_expand, with_rerank))
+        self.get_args.append((query, top_k, with_rerank))
         return self._cached
 
     async def set(
@@ -113,23 +100,20 @@ class FakeCache:
         results: list[ChunkScore],
         *,
         top_k: int,
-        with_expand: bool,
         with_rerank: bool,
     ) -> None:
-        self.set_calls.append((query, top_k, with_expand, with_rerank, results))
+        self.set_calls.append((query, top_k, with_rerank, results))
 
 
 def _make_retriever(
     hybrid_hits: list[ChunkScore] | None = None,
-    expanded: list[ChunkScore] | None = None,
     reranked: list[ChunkScore] | None = None,
     cached: list[ChunkScore] | None = None,
     chunks_orm: list[FakeChunk] | None = None,
     titles: dict[int, str] | None = None,
-) -> tuple[GraphRAGRetriever, FakeHybridSearch, FakeExpander, FakeReranker, FakeCache]:
+) -> tuple[HybridRetriever, FakeHybridSearch, FakeReranker, FakeCache]:
     """构造完整 mock 链路的 retriever."""
     hybrid = FakeHybridSearch(hybrid_hits or [])
-    expander = FakeExpander(expanded or hybrid_hits or [])
     reranker = FakeReranker(reranked or hybrid_hits or [])
     cache = FakeCache(cached)
 
@@ -140,10 +124,9 @@ def _make_retriever(
     def session_factory() -> FakeSession:
         return session
 
-    retriever = GraphRAGRetriever(
+    retriever = HybridRetriever(
         session_factory=session_factory,
         hybrid_search=hybrid,
-        expander_factory=lambda _session: expander,
         reranker=reranker,
         cache=cache,
     )
@@ -155,21 +138,20 @@ def _make_retriever(
 
     retriever._fetch_chunks_orm = fake_fetch_chunks_orm  # type: ignore[assignment]
 
-    return retriever, hybrid, expander, reranker, cache
+    return retriever, hybrid, reranker, cache
 
 
 @pytest.mark.asyncio
 async def test_retrieve_cache_hit_skips_pipeline() -> None:
-    """缓存命中时跳过 hybrid/expand/rerank, 直接返回."""
+    """缓存命中时跳过 hybrid/rerank, 直接返回."""
     cached = [ChunkScore(chunk_id=1, score=0.9, source="hybrid")]
-    retriever, hybrid, expander, reranker, cache = _make_retriever(cached=cached)
+    retriever, hybrid, reranker, cache = _make_retriever(cached=cached)
 
     result = await retriever.retrieve("query", top_k=5)
 
     assert result.cache_hit is True
     assert cache.get_calls == 1
     assert hybrid.search_calls == []  # 未调用
-    assert expander.expand_calls == 0
     assert reranker.rerank_calls == 0
     # 缓存命中不写缓存
     assert cache.set_calls == []
@@ -180,29 +162,26 @@ async def test_retrieve_cache_hit_skips_pipeline() -> None:
 async def test_retrieve_passes_params_to_cache() -> None:
     """缓存 get/set 收到与检索一致的参数(参与缓存键, 参数不一致不得相互命中)."""
     hybrid_hits = [ChunkScore(chunk_id=1, score=0.5, source="hybrid")]
-    retriever, _hybrid, _expander, _reranker, cache = _make_retriever(
+    retriever, _hybrid, _reranker, cache = _make_retriever(
         hybrid_hits=hybrid_hits,
-        expanded=hybrid_hits,
         reranked=hybrid_hits,
     )
 
-    await retriever.retrieve("query", top_k=7, with_expand=False, with_rerank=True)
+    await retriever.retrieve("query", top_k=7, with_rerank=True)
 
     # get 与 set 均使用相同参数
-    assert cache.get_args == [("query", 7, False, True)]
+    assert cache.get_args == [("query", 7, True)]
     assert len(cache.set_calls) == 1
     assert cache.set_calls[0][1] == 7
-    assert cache.set_calls[0][2] is False
-    assert cache.set_calls[0][3] is True
+    assert cache.set_calls[0][2] is True
 
 
 @pytest.mark.asyncio
 async def test_retrieve_cache_miss_full_pipeline() -> None:
-    """缓存未命中时走完整链路: hybrid -> expand -> rerank -> set."""
+    """缓存未命中时走完整链路: hybrid -> rerank -> set."""
     hybrid_hits = [ChunkScore(chunk_id=1, score=0.5, source="hybrid")]
-    retriever, hybrid, expander, reranker, cache = _make_retriever(
+    retriever, hybrid, reranker, cache = _make_retriever(
         hybrid_hits=hybrid_hits,
-        expanded=hybrid_hits,
         reranked=hybrid_hits,
     )
 
@@ -211,46 +190,28 @@ async def test_retrieve_cache_miss_full_pipeline() -> None:
     assert result.cache_hit is False
     assert cache.get_calls == 1
     assert len(hybrid.search_calls) == 1
-    assert expander.expand_calls == 1
     assert reranker.rerank_calls == 1
     # 写缓存
     assert len(cache.set_calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_retrieve_with_expand_disabled() -> None:
-    """with_expand=False 时跳过一跳扩展."""
-    hybrid_hits = [ChunkScore(chunk_id=1, score=0.5, source="hybrid")]
-    retriever, _hybrid, expander, reranker, _cache = _make_retriever(
-        hybrid_hits=hybrid_hits,
-        reranked=hybrid_hits,
-    )
-
-    await retriever.retrieve("query", top_k=5, with_expand=False)
-
-    assert expander.expand_calls == 0
-    assert reranker.rerank_calls == 1  # rerank 仍执行
-
-
-@pytest.mark.asyncio
 async def test_retrieve_with_rerank_disabled() -> None:
     """with_rerank=False 时跳过精排."""
     hybrid_hits = [ChunkScore(chunk_id=1, score=0.5, source="hybrid")]
-    retriever, _hybrid, expander, reranker, _cache = _make_retriever(
+    retriever, _hybrid, reranker, _cache = _make_retriever(
         hybrid_hits=hybrid_hits,
-        expanded=hybrid_hits,
     )
 
     await retriever.retrieve("query", top_k=5, with_rerank=False)
 
-    assert expander.expand_calls == 1
     assert reranker.rerank_calls == 0
 
 
 @pytest.mark.asyncio
 async def test_retrieve_empty_query() -> None:
     """空查询应正常处理(不抛异常)."""
-    retriever, _hybrid, _expander, _reranker, _cache = _make_retriever(
+    retriever, _hybrid, _reranker, _cache = _make_retriever(
         hybrid_hits=[],
     )
 
@@ -266,7 +227,6 @@ async def test_retrieve_returns_chunk_with_content() -> None:
     chunks_orm = [FakeChunk(id=1, content="hello world")]
     retriever, *_ = _make_retriever(
         hybrid_hits=hybrid_hits,
-        expanded=hybrid_hits,
         reranked=hybrid_hits,
         chunks_orm=chunks_orm,
     )
@@ -286,7 +246,6 @@ async def test_retrieve_returns_doc_origin() -> None:
     chunks_orm = [FakeChunk(id=1, content="hello world", doc_id=42)]
     retriever, *_ = _make_retriever(
         hybrid_hits=hybrid_hits,
-        expanded=hybrid_hits,
         reranked=hybrid_hits,
         chunks_orm=chunks_orm,
         titles={42: "报销手册"},
@@ -304,7 +263,6 @@ async def test_retrieve_latency_recorded() -> None:
     hybrid_hits = [ChunkScore(chunk_id=1, score=0.5, source="hybrid")]
     retriever, *_ = _make_retriever(
         hybrid_hits=hybrid_hits,
-        expanded=hybrid_hits,
         reranked=hybrid_hits,
     )
 

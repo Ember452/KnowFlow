@@ -4,7 +4,6 @@ from knowflow.models.agent import AgentRun, TaskDelegation
 from knowflow.models.base import Base, IDMixin, JSONBType, TimestampMixin, VectorField
 from knowflow.models.document import Chunk, Document, DocumentIndex
 from knowflow.models.eval import EvalDataset, EvalResult, EvalRun
-from knowflow.models.graph import Entity, EntityAlias, Relation
 from knowflow.models.memory import LongTermMemory, MemoryConflict, MemorySummary
 from knowflow.models.session import Message, Session, Turn
 from knowflow.models.tool import SkillActivation, ToolCall, ToolMetric
@@ -16,8 +15,6 @@ __all__ = [
     "Chunk",
     "Document",
     "DocumentIndex",
-    "Entity",
-    "EntityAlias",
     "EvalDataset",
     "EvalResult",
     "EvalRun",
@@ -27,7 +24,6 @@ __all__ = [
     "MemoryConflict",
     "MemorySummary",
     "Message",
-    "Relation",
     "Session",
     "SkillActivation",
     "TaskDelegation",

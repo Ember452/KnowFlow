@@ -11,7 +11,7 @@
 
 Python 3.13 / FastAPI / LangGraph / LangChain / MCP / Milvus / PostgreSQL / Redis / MinIO
 
-面向企业内部异构文档的知识问答与任务自动化场景，独立设计并实现完整 Agent 平台，解决跨文档检索、工具注入膨胀、复杂任务编排、长会话上下文四大问题；覆盖"文档解析 → 混合检索 → 工具调用 → 多 Agent 编排 → 评测"全链路，内置 6 类工具、5 个 Skill、771 个单测，核心指标全部脚本实测可复现。
+面向企业内部异构文档的知识问答与任务自动化场景，独立设计并实现完整 Agent 平台，解决单路检索召回不全、工具注入膨胀、复杂任务编排、长会话上下文四大问题；覆盖"文档解析 → 混合检索 → 工具调用 → 多 Agent 编排 → 评测"全链路，内置 6 类工具、5 个 Skill、771 个单测，核心指标全部脚本实测可复现。
 
 - 多 Agent 编排：实现复杂任务（竞品调研、报告撰写、多主题分析）自动拆解与子 Agent 并行执行，环节互不干扰；单环节失败自动降级不阻塞整体，进程中断后可从断点续跑；端到端耗时较串行下降均值 65.6%（8 任务并行最佳 84.1%）
 
@@ -19,7 +19,7 @@ Python 3.13 / FastAPI / LangGraph / LangChain / MCP / Milvus / PostgreSQL / Redi
 
 - MCP 工具生态接入：基于 MCP 2.0 SDK 实现 stdio 协议工具网关，远程工具经适配器统一适配为本地工具接入统一注册表，自动纳入执行域隔离体系；内置 demo Server 独立子进程真实协议往返，覆盖"注册→治理→隔离→调用→降级"全链路，连接失败降级告警不阻塞对话
 
-- GraphRAG 混合检索：针对纯向量检索跨文档关联查询召回差的问题，设计向量 + BM25 双路召回经 RRF 融合，LLM 抽取实体关系建图谱，一跳扩展解决跨文档关联召回；选用 PostgreSQL 单表 JOIN 而非图数据库；50 条标注查询评测中跨文档查询 MRR 提升至 0.87
+- 混合检索：针对纯向量检索关键词敏感度不足、召回不全的问题，设计向量 + BM25 双路召回经 RRF 融合、本地 reranker 精排，索引侧向量/BM25 双写、重建一致性可验证；50 条标注查询评测 Recall@10 33.6%、MRR 0.68，向量服务异常自动降级本地 BM25 不中断对话
 
 - 记忆与上下文治理：搭建"短期 → 重要性筛选 → 压缩 → 长期"四级记忆管线，每 5 轮自动沉淀、语义去重防冗余、冲突检测留痕待审且不阻断写入；上下文按 token 预算分级，超长工具结果卸载进沙盒仅注入引用、可经工具读回，长会话不丢数据
 
@@ -29,9 +29,9 @@ Python 3.13 / FastAPI / LangGraph / LangChain / MCP / Milvus / PostgreSQL / Redi
 
 ### 2.1 项目背景
 
-企业内部知识沉淀在大量异构文档中（产品手册、HR 政策、IT 工单、运营 SOP），传统关键词检索无法理解语义，员工查找信息效率低。大模型时代，基于 RAG 的知识问答 Agent 成为企业智能助手的主流形态，但现有方案存在四个核心问题：一是检索只能做向量相似度匹配，无法跨文档关联；二是工具调用缺乏治理，模型可见工具过多导致 Token 浪费和调用准确率下降；三是多 Agent 协作缺乏编排，复杂任务无法拆解委派；四是上下文管理粗放，多轮工具调用容易撑爆上下文窗口。
+企业内部知识沉淀在大量异构文档中（产品手册、HR 政策、IT 工单、运营 SOP），传统关键词检索无法理解语义，员工查找信息效率低。大模型时代，基于 RAG 的知识问答 Agent 成为企业智能助手的主流形态，但现有方案存在四个核心问题：一是单路检索召回不全，纯向量对关键词不敏感、纯关键词无法理解语义；二是工具调用缺乏治理，模型可见工具过多导致 Token 浪费和调用准确率下降；三是多 Agent 协作缺乏编排，复杂任务无法拆解委派；四是上下文管理粗放，多轮工具调用容易撑爆上下文窗口。
 
-KnowFlow 针对这四个问题，构建一个可编排、可扩展的企业知识库 Agent 平台，提供 GraphRAG 检索、工具治理、Multi-Agent 编排、上下文工程、沙盒文件系统、流式可观测六大核心能力。
+KnowFlow 针对这四个问题，构建一个可编排、可扩展的企业知识库 Agent 平台，提供混合检索、工具治理、Multi-Agent 编排、上下文工程、沙盒文件系统、流式可观测六大核心能力。
 
 ### 2.2 项目定位
 
@@ -41,13 +41,13 @@ KnowFlow 针对这四个问题，构建一个可编排、可扩展的企业知�
 
 **目标用户**：企业员工（终端使用者，对话获取知识、执行任务）；平台开发者（二次开发，扩展 Skill、接入工具、定制 Agent）。
 
-**核心场景**：知识问答（提问 → GraphRAG 检索 → 流式回答）、复杂任务（多步任务 → 主 Agent 拆解 → 委派子 Agent 并发执行 → 汇总）、工具调用（意图识别 → 激活 Skill → 动态注入工具 → 执行域隔离）、长期记忆（跨会话偏好 → 相关度召回 → 压缩注入）。
+**核心场景**：知识问答（提问 → 混合检索 → 流式回答）、复杂任务（多步任务 → 主 Agent 拆解 → 委派子 Agent 并发执行 → 汇总）、工具调用（意图识别 → 激活 Skill → 动态注入工具 → 执行域隔离）、长期记忆（跨会话偏好 → 相关度召回 → 压缩注入）。
 
 ### 2.4 核心功能需求
 
 | 编号 | 功能 | 描述 |
 |---|---|---|
-| F1 | GraphRAG 检索 | 文档上传→解析分块→LLM 抽取实体关系→存 PostgreSQL→向量+BM25 Hybrid 召回→一跳 JOIN 扩展→reranker 精排 |
+| F1 | 混合检索 | 文档上传→解析分块→Embedding 向量化→向量+BM25 双路召回→RRF 融合→reranker 精排 |
 | F2 | 工具治理 | Skill 声明式加载 + 依赖开关 + 关联工具动态注入 + 四类执行域隔离 |
 | F3 | Multi-Agent 编排 | 主/子 Agent 协同 + task 委派 + checkpoint 父子关系 + 并发执行 + 可观测 |
 | F4 | 上下文工程 | 滑动窗口 + 动态摘要 + 超阈值卸载沙盒 + checkpoint 异步 run |
@@ -58,7 +58,6 @@ KnowFlow 针对这四个问题，构建一个可编排、可扩展的企业知�
 
 | 指标 | 目标值 | 测量方式 |
 |---|---|---|
-| GraphRAG Recall@10 | 相对 Hybrid baseline 提升 8% | 50-100 条评测集对比 |
 | 单轮可见工具数 | 下降 34.2% | 执行域隔离前后对比 |
 | Tool Schema Token | 下降 32.6% | Token 计数对比 |
 | Function Calling 准确率 | 94+% | 工具调用正确率统计 |
@@ -83,7 +82,7 @@ KnowFlow 针对这四个问题，构建一个可编排、可扩展的企业知�
 | LLM 接口 | LangChain | 模型/工具/Agent 抽象层 |
 | 工具协议 | MCP | Model Context Protocol |
 | 向量库 | Milvus | 高性能向量检索 |
-| 关系库 | PostgreSQL | 业务数据 + 实体关系图谱 |
+| 关系库 | PostgreSQL | 业务数据 |
 | 对象存储 | MinIO | 沙盒文件系统后端 |
 | 缓存 | Redis | 会话/短期记忆/checkpoint |
 | 流式 | SSE | sse-starlette |
@@ -108,14 +107,14 @@ KnowFlow 针对这四个问题，构建一个可编排、可扩展的企业知�
 └──┬──────────┬──────────┬──────────┬──────────┬───────────────┘
    │          │          │          │          │
 ┌──▼──┐   ┌───▼───┐  ┌───▼────┐ ┌───▼────┐ ┌───▼────────┐
-│Graph│   │工具治理│  │上下文  │ │沙盒    │ │流式+可观测 │
-│RAG  │   │模块   │  │工程    │ │文件系统│ │+记忆       │
-│检索 │   │       │  │模块    │ │模块    │ │模块        │
+│混合  │   │工具治理│  │上下文  │ │沙盒    │ │流式+可观测 │
+│检索  │   │模块   │  │工程    │ │文件系统│ │+记忆       │
+│模块  │   │       │  │模块    │ │模块    │ │模块        │
 └──┬──┘   └───┬───┘  └───┬────┘ └───┬────┘ └───┬────────┘
    │          │          │          │          │
 ┌──▼──────────▼──────────▼──────────▼──────────▼───────────────┐
 │                        存储层                                 │
-│  Milvus(向量) · PostgreSQL(图谱+业务) · MinIO(文件)           │
+│  Milvus(向量) · PostgreSQL(业务) · MinIO(文件)           │
 │  Redis(会话+记忆+checkpoint)                                  │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -130,84 +129,31 @@ KnowFlow 针对这四个问题，构建一个可编排、可扩展的企业知�
 
 ### 3.4 模块详细设计
 
-#### 模块一：GraphRAG 检索（retrieval/）
+#### 模块一：混合检索（retrieval/）
 
-**核心链路**：文档上传 → 解析分块 → LLM 抽取实体关系 → 存图 → 查询时 Hybrid 召回 → 一跳扩展 → reranker 精排
+**核心链路**：文档上传 → 解析分块 → Embedding 向量化 → 索引时向量/BM25 双写 → 查询时 Hybrid 召回 → reranker 精排
 
 **核心类设计**：
 
-`RetrievalPipeline`（编排完整检索链路）：
-- `index_document(doc_id)` → 调用 parser → splitter → embedding → entity_extractor → 写入 vector_store + graph_store + bm25_store
-- `retrieve(query, top_k)` → 调用 hybrid_search → expander → reranker → 返回 chunks
-
-`EntityExtractor`（LLM 实体关系抽取）：
-- `extract(chunks)` → 对每个 chunk 调 LLM 抽取 (entity_name, entity_type, relations)
-- `normalize(entities)` → 实体归一（同义词合并、大小写统一、别名映射）
-- Prompt 模板要求 LLM 输出 JSON 结构 `{"entities": [...], "relations": [...]}`
-
-`GraphStore`（PostgreSQL 图谱存储）：
-- `upsert_entities(doc_id, entities)` → 批量写入 entities 表
-- `upsert_relations(doc_id, relations)` → 批量写入 relations 表
-- `one_hop_expand(entity_ids)` → SQL JOIN 一跳扩展，返回关联 chunk_id 列表
+`RetrievalPipeline`（索引编排 pipeline）：
+- `index_document(doc_id)` → 调用 parser → splitter → embedding → 写入 vector_store + bm25_store
+- `reindex_document(doc_id)` → 先清理向量/BM25/chunks 再重新索引
 
 `HybridSearch`（向量 + BM25 融合）：
 - `vector_search(query, top_k)` → Milvus 向量召回
 - `bm25_search(query, top_k)` → PostgreSQL tsvector 全文检索
 - `fuse(vector_results, bm25_results)` → RRF（Reciprocal Rank Fusion）融合
 
-`Expander`（实体一跳扩展）：
-- `expand(chunks)` → 从召回 chunk 提取实体 ID → 调 GraphStore.one_hop_expand → 召回关联 chunk → 去重合并
+`HybridRetriever`（统一检索入口）：
+- `retrieve(query, top_k)` → hybrid_search 召回 → reranker 精排 → 结果缓存（Redis md5 key）
+- 结果带文档出处（doc_id/doc_title）供引用溯源
 
 `Reranker`（精排）：
-- `rerank(query, chunks)` → cross-encoder 模型对 (query, chunk) 打分 → 按分数重排
+- `rerank(query, chunks)` → 本地交叉编码器对 (query, chunk) 打分 → 按分数重排
 
-**数据表设计**：
-
-```sql
--- 实体表
-CREATE TABLE entities (
-    id          BIGSERIAL PRIMARY KEY,
-    doc_id      BIGINT NOT NULL REFERENCES documents(id),
-    chunk_id    BIGINT NOT NULL REFERENCES chunks(id),
-    name        VARCHAR(255) NOT NULL,
-    entity_type VARCHAR(64) NOT NULL,        -- person/org/concept/product...
-    normalized  VARCHAR(255) NOT NULL,       -- 归一化名称（用于匹配）
-    created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX idx_entities_normalized ON entities(normalized);
-CREATE INDEX idx_entities_chunk ON entities(chunk_id);
-
--- 实体别名表（同义词/别名映射）
-CREATE TABLE entity_aliases (
-    id          BIGSERIAL PRIMARY KEY,
-    entity_id   BIGINT NOT NULL REFERENCES entities(id),
-    alias       VARCHAR(255) NOT NULL,
-    UNIQUE(entity_id, alias)
-);
-
--- 关系表
-CREATE TABLE relations (
-    id                BIGSERIAL PRIMARY KEY,
-    doc_id            BIGINT NOT NULL REFERENCES documents(id),
-    source_entity_id  BIGINT NOT NULL REFERENCES entities(id),
-    target_entity_id  BIGINT NOT NULL REFERENCES entities(id),
-    relation_type     VARCHAR(64) NOT NULL,  -- belongs_to/related_to/part_of...
-    confidence        FLOAT DEFAULT 1.0,
-    created_at        TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX idx_relations_source ON relations(source_entity_id);
-CREATE INDEX idx_relations_target ON relations(target_entity_id);
-
--- 一跳扩展核心查询
-SELECT DISTINCT c.id, c.content
-FROM chunks c
-JOIN entities e ON e.chunk_id = c.id
-JOIN relations r ON r.source_entity_id = e.id
-JOIN entities e2 ON r.target_entity_id = e2.id
-JOIN chunks c2 ON e2.chunk_id = c2.id
-WHERE e.id = ANY(%s)  -- 输入：召回 chunk 中的实体 ID
-  AND c.id <> c2.id;
-```
+`EmbeddingService` / `BM25Store`：
+- Ollama embedding 批量向量化，Chroma 持久化向量库；BM25 应用内存索引（启动时从 chunks 表全量加载）
+- 向量库不可用且未强制要求时自动降级本地 BM25，不中断对话
 
 #### 模块二：工具治理（tools/）
 
@@ -424,10 +370,9 @@ CREATE TABLE checkpoints (
 - `replay(session_id, checkpoint_id)` → 恢复状态 + 按时间序重放 trace events
 
 **离线评测**：
-- `EvalRunner` 跑评测集（knowledge_qa_eval.jsonl）
-- 对比 baseline（纯 Hybrid）vs GraphRAG 增强
-- 指标：Recall@K / MRR / NDCG / 工具调用准确率
-- 生成评测报告（对比表 + 提升幅度）
+- `EvalRunner` 跑评测集（knowledge_qa_eval.jsonl / retrieval_eval.jsonl）
+- 指标：Recall@K / MRR / NDCG / 要点命中率 / 工具调用准确率
+- 生成评测报告（指标汇总表 + 场景明细）
 
 **记忆模块**：
 
@@ -504,19 +449,15 @@ CREATE INDEX idx_trace_id ON trace_spans(trace_id);
 
 ### 3.6 关键设计决策
 
-**D1 · 图存储用 PostgreSQL 不用 Neo4j**：一跳扩展用 SQL JOIN 即可实现，Neo4j 的优势在多跳和图算法，本场景用不到，不过度设计。架构保留升级路径，后续需要多跳或图规模爆发再引入 Neo4j。
+**D1 · Agent 编排用 LangGraph**：状态机模型适合知识问答多步推理，原生 checkpoint 支持断点续跑，是大厂 JD 高频关键词。
 
-**D2 · 一跳扩展不用 PageRank**：PageRank 全图迭代延迟高且算法级别过高。一跳扩展一条 SQL JOIN 毫秒级响应，已解决跨文档关联核心问题，收益边际递减不值得引入。
+**D2 · 依赖管理用 uv**：比 pip/poetry 快 10-100x，2024-2025 年 Python 生态主流，pyproject.toml + uv.lock 标准化。
 
-**D3 · Agent 编排用 LangGraph**：状态机模型适合知识问答多步推理，原生 checkpoint 支持断点续跑，是大厂 JD 高频关键词。
+**D3 · 流式用 SSE 不用 WebSocket**：知识问答是单向流式输出，SSE 比 WebSocket 轻量，FastAPI 原生支持，HTTP 兼容性好。
 
-**D4 · 依赖管理用 uv**：比 pip/poetry 快 10-100x，2024-2025 年 Python 生态主流，pyproject.toml + uv.lock 标准化。
+**D4 · 沙盒用 MinIO 不用本地文件系统**：对象存储天然隔离（bucket prefix），无宿主文件系统越权风险，且支持配额和 TTL 生命周期管理。
 
-**D5 · 流式用 SSE 不用 WebSocket**：知识问答是单向流式输出，SSE 比 WebSocket 轻量，FastAPI 原生支持，HTTP 兼容性好。
-
-**D6 · 沙盒用 MinIO 不用本地文件系统**：对象存储天然隔离（bucket prefix），无宿主文件系统越权风险，且支持配额和 TTL 生命周期管理。
-
-**D7 · 记忆分层用 Redis + PostgreSQL**：短期记忆 Redis 会话级 TTL，长期记忆 PostgreSQL 持久化 + 向量召回，热数据内存冷数据磁盘，符合访问模式。
+**D5 · 记忆分层用 Redis + PostgreSQL**：短期记忆 Redis 会话级 TTL，长期记忆 PostgreSQL 持久化 + 向量召回，热数据内存冷数据磁盘，符合访问模式。
 
 ---
 
@@ -610,8 +551,8 @@ services:
 
 ## 四、面试核心叙事
 
-项目讲述时的核心叙事线：KnowFlow 不是简单的 RAG 问答，而是**企业级 Agent 平台**，核心解决四个工程问题——检索的跨文档关联（GraphRAG）、工具调用的治理（执行域隔离）、复杂任务的编排（Multi-Agent）、上下文的治理（卸载 + 摘要）。每个问题都有量化指标支撑（8% / 34.2% / 32.6% / 94+% / 77.6%），且关键设计决策都有取舍逻辑（PostgreSQL vs Neo4j、一跳 vs PageRank、LangGraph vs 手写、SSE vs WebSocket）。
+项目讲述时的核心叙事线：KnowFlow 不是简单的 RAG 问答，而是**企业级 Agent 平台**，核心解决四个工程问题——检索的召回（混合检索）、工具调用的治理（执行域隔离）、复杂任务的编排（Multi-Agent）、上下文的治理（卸载 + 摘要）。每个问题都有量化指标支撑（33.6% / 34.2% / 32.6% / 94+% / 77.6%），且关键设计决策都有取舍逻辑（RRF vs 加权融合、LangGraph vs 手写、SSE vs WebSocket）。
 
-主动引导方向：检索的图谱增强、工具执行域隔离、上下文卸载机制。这些都是能讲深的技术点，且有量化数据。
+主动引导方向：混合检索与降级、工具执行域隔离、上下文卸载机制。这些都是能讲深的技术点，且有量化数据。
 
 避免方向：不要主动提"有多少用户""线上 QPS 多少"（无真实部署数据）。被问到时诚实说"目前是个人项目 / 内部测试，没有大规模线上数据，但本地评测集测了指标"。

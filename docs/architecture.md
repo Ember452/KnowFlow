@@ -30,7 +30,7 @@
    │          │          │          │          │
 ┌──▼──────────▼──────────▼──────────▼──────────▼───────────────┐
 │                        存储层                                 │
-│  Milvus(向量) · PostgreSQL(图谱+业务) · MinIO(文件)           │
+│  Milvus(向量) · PostgreSQL(业务) · MinIO(文件)           │
 │  Redis(会话+记忆)                                            │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -45,14 +45,13 @@
 - 多 Agent 编排失败自动降级到直连链路（不阻塞对话）
 - SSE 事件序列：`retrieval → [progress/tool_start/tool_end]* → token* → done`
 
-### 2.2 GraphRAG 检索（retrieval/）
+### 2.2 混合检索（retrieval/）
 
 | 组件 | 职责 |
 |---|---|
-| `pipeline.py` | 文档解析 → 分块（递归字符，默认 512/64）→ 实体抽取 → 向量/BM25/图谱索引 |
-| `hybrid_search.py` | 向量召回（bge-m3）+ BM25 双路 RRF 融合（k=60） |
-| `expander.py` | 实体图谱一跳扩展（PostgreSQL 递归 JOIN） |
-| `reranker.py` | cross-encoder（bge-reranker-v2-m3）二次精排 |
+| `pipeline.py` | 文档解析 → 分块（递归字符，默认 512/64）→ 向量/BM25 双写入库 |
+| `hybrid_search.py` | 向量召回（Ollama embedding）+ BM25 双路 RRF 融合（k=60） |
+| `reranker.py` | 本地交叉编码器二次精排 |
 | `retriever.py` | 统一入口 + 检索缓存 |
 
 ### 2.3 工具治理（tools/）
@@ -93,10 +92,9 @@ LangGraph 状态机：`START → understand(规则意图) → plan(LLM 规划) �
 
 Redis Stream 任务队列（index 流 + DLQ）→ 独立 worker 进程消费，重试 3 次后入死信队列。
 
-## 3. 数据模型（PostgreSQL 22 张表）
+## 3. 数据模型（PostgreSQL 19 张表）
 
 - **文档**：documents / chunks / document_index
-- **图谱**：entities / relations
 - **会话**：sessions / messages / turns
 - **Agent**：agent_runs / task_delegations
 - **工具**：tool_calls / skill_activations / tool_metrics
@@ -131,8 +129,6 @@ kill 进程 → 同一 thread_id + checkpoint_id 调 graph.ainvoke
 
 | ADR | 决策 |
 |---|---|
-| 0001 | 图存储用 PostgreSQL 不用 Neo4j |
-| 0002 | 一跳扩展不用 PageRank |
 | 0003 | checkpoint 存 PostgreSQL 而非 Redis |
 | 0004 | 采用 LangGraph 原生 checkpoint（PostgresSaver） |
 | 0005 | 依赖管理用 uv |

@@ -140,7 +140,7 @@ curl -s -X POST http://localhost:8000/api/v1/knowledge/search \
 ```
 
 **预期**: 返回 `chunks` 非空, 含 `content`/`score`/`source`, `latency_ms` 有值, `cache_hit=false`。
-第二次同 query 且同检索参数(top_k/with_expand/with_rerank)`cache_hit=true`(Redis 缓存命中)。
+第二次同 query 且同检索参数(top_k/with_rerank)`cache_hit=true`(Redis 缓存命中)。
 文档索引/删除成功后缓存自动失效(用例 5 后重查同 query 应 `cache_hit=false`)。
 
 | 项 | 预期 | 实测 |

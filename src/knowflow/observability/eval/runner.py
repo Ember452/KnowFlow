@@ -37,7 +37,7 @@ class EvalRunner:
         """初始化.
 
         Args:
-            retriever: GraphRAGRetriever 或 fake(实现 async retrieve).
+            retriever: HybridRetriever 或 fake(实现 async retrieve).
             llm: langchain BaseChatModel 或 fake(实现 async ainvoke).
             chunk_map: doc_id -> [chunk_ids]; None 时检索评测仅算 doc 级指标.
         """

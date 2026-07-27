@@ -90,11 +90,10 @@ _retriever: Any = None
 
 
 def get_retriever() -> Any:
-    """构造并缓存 GraphRAGRetriever 单例.
+    """构造并缓存 HybridRetriever 单例.
 
     接线: session_factory=get_session_factory(), hybrid_search 用共享单例
-    (VectorStore/EmbeddingClient/BM25Store), expander_factory 按调用构造,
-    reranker=get_reranker(), cache=RetrievalCache().
+    (VectorStore/EmbeddingClient/BM25Store), reranker=get_reranker(), cache=RetrievalCache().
     """
     global _retriever
     if _retriever is not None:
@@ -103,10 +102,9 @@ def get_retriever() -> Any:
     from knowflow.retrieval.bm25_store import get_bm25_store
     from knowflow.retrieval.cache import RetrievalCache
     from knowflow.retrieval.embedding import get_embedding_client
-    from knowflow.retrieval.expander import Expander
     from knowflow.retrieval.hybrid_search import HybridSearch
     from knowflow.retrieval.reranker import get_reranker
-    from knowflow.retrieval.retriever import GraphRAGRetriever
+    from knowflow.retrieval.retriever import HybridRetriever
     from knowflow.retrieval.vector_store import VectorStore
 
     hybrid = HybridSearch(
@@ -114,10 +112,9 @@ def get_retriever() -> Any:
         bm25_store=get_bm25_store(),
         embedding_client=get_embedding_client(),
     )
-    _retriever = GraphRAGRetriever(
+    _retriever = HybridRetriever(
         session_factory=get_session_factory(),
         hybrid_search=hybrid,
-        expander_factory=lambda session: Expander(session),
         reranker=get_reranker(),
         cache=RetrievalCache(),
     )

@@ -24,4 +24,4 @@ class EvalRunRequest(BaseModel):
     """启动评测请求."""
 
     dataset_id: int
-    mode: str = Field(default="graphrag", description="baseline/graphrag 对比模式")
+    mode: str = Field(default="static", description="static/real 评测模式")

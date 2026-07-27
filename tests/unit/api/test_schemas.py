@@ -25,7 +25,6 @@ def test_page_response_defaults() -> None:
 def test_search_request_validation() -> None:
     """检索请求 top_k 范围校验."""
     req = SearchRequest(query="测试", top_k=5)
-    assert req.with_expand is True
     assert req.with_rerank is True
     assert req.top_k == 5
 

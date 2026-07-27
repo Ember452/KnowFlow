@@ -1,4 +1,4 @@
-"""知识检索工具 - 调 GraphRAGRetriever 检索知识库.
+"""知识检索工具 - 调 HybridRetriever 检索知识库.
 
 direct 域, 主 Agent 始终可见. execute(query, top_k) 调 retriever.retrieve,
 返回 chunk 列表(content 截断防膨胀). retriever 在构造时注入(单例或 fake).
@@ -12,7 +12,7 @@ from knowflow.tools.base import BaseTool, ToolResult
 
 
 class RetrievalTool(BaseTool):
-    """知识检索: 调 GraphRAG 检索器返回相关片段. direct 域."""
+    """知识检索: 调混合检索器返回相关片段. direct 域."""
 
     name = "retrieval_tool"
     description = "在企业知识库中检索与查询相关的文档片段. 输入 query, 可选 top_k."

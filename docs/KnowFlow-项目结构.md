@@ -56,7 +56,6 @@ knowflow/
 │       │   ├── repositories/             # Repository 模式：业务与 SQL 解耦
 │       │   │   ├── __init__.py
 │       │   │   ├── document_repo.py      # 文档/分块 CRUD
-│       │   │   ├── graph_repo.py         # 实体/关系/一跳扩展查询
 │       │   │   ├── session_repo.py       # 会话/消息
 │       │   │   ├── agent_repo.py         # AgentRun/委派/checkpoint
 │       │   │   └── trace_repo.py         # Trace 写入/查询
@@ -71,7 +70,6 @@ knowflow/
 │       │   ├── __init__.py
 │       │   ├── base.py                   # DeclarativeBase + 公共 Mixin
 │       │   ├── document.py               # Document / Chunk / DocumentIndex
-│       │   ├── graph.py                  # Entity / Relation / EntityAlias
 │       │   ├── session.py                # Session / Message / Turn
 │       │   ├── agent.py                  # AgentRun / TaskDelegation / Checkpoint
 │       │   ├── tool.py                   # ToolCall / SkillActivation / ToolMetric
@@ -139,9 +137,9 @@ knowflow/
 │       │   ├── concurrent.py             # 并发执行器（asyncio.gather/超时/降级）
 │       │   └── prompts.py                # Agent 系统 Prompt 模板
 │       │
-│       ├── retrieval/                    # ── F1: GraphRAG 检索模块 ──
+│       ├── retrieval/                    # ── F1: 混合检索模块 ──
 │       │   ├── __init__.py
-│       │   ├── pipeline.py               # RetrievalPipeline（编排完整检索链路）
+│       │   ├── pipeline.py               # RetrievalPipeline（索引编排链路）
 │       │   ├── indexer/                  # 文档索引子模块
 │       │   │   ├── __init__.py
 │       │   │   ├── parser.py             # 文档解析调度（按扩展名分发）
@@ -152,14 +150,11 @@ knowflow/
 │       │   │   ├── splitter.py           # 分块策略（语义/递归/overlap）
 │       │   │   └── cleaner.py            # 文本清洗（去噪/规范化）
 │       │   ├── embedding.py              # Embedding 客户端（多模型/批量）
-│       │   ├── entity_extractor.py       # LLM 实体关系抽取（Prompt/解析/归一）
-│       │   ├── graph_store.py            # PostgreSQL 图谱存储（entities/relations CRUD）
 │       │   ├── vector_store.py           # Milvus 向量存储（upsert/search/管理）
-│       │   ├── bm25_store.py             # BM25 索引（PostgreSQL tsvector / 倒排）
+│       │   ├── bm25_store.py             # BM25 索引（内存索引 / 倒排）
 │       │   ├── hybrid_search.py          # Hybrid 融合（RRF / 加权）
-│       │   ├── expander.py               # 实体一跳扩展（SQL JOIN 召回关联 chunk）
 │       │   ├── reranker.py               # Reranker 精排（cross-encoder / LLM 打分）
-│       │   ├── retriever.py              # 统一检索入口（GraphRAGRetriever）
+│       │   ├── retriever.py              # 统一检索入口（HybridRetriever）
 │       │   └── cache.py                  # 检索结果缓存（query hash + TTL）
 │       │
 │       ├── tools/                        # ── F2: 工具治理模块 ──
@@ -254,11 +249,8 @@ knowflow/
 │   ├── unit/                             # 单测（mock 外部存储，不依赖容器）
 │   │   ├── retrieval/
 │   │   │   ├── test_splitter.py
-│   │   │   ├── test_entity_extractor.py
-│   │   │   ├── test_graph_store.py
 │   │   │   ├── test_hybrid_search.py
-│   │   │   ├── test_expander.py
-│   │   │   └── test_reranker.py
+│   │   │   ├── test_reranker.py
 │   │   ├── tools/
 │   │   │   ├── test_skill_loader.py
 │   │   │   ├── test_domain.py
@@ -295,7 +287,7 @@ knowflow/
 │       └── compare_baseline.py           # baseline 对比
 │
 ├── scripts/                              # ── 工程脚本 ──
-│   ├── init_db.py                        # 初始化数据库 + 图谱表
+│   ├── init_db.py                        # 初始化数据库
 │   ├── init_milvus.py                    # 创建 Milvus collection
 │   ├── seed_skills.py                    # 加载默认 Skill
 │   ├── benchmark.py                      # 性能基准测试
@@ -313,9 +305,8 @@ knowflow/
 │   └── README.md
 │
 └── docs/                                 # ── 项目文档 ──
-    ├── adr/                              # 架构决策记录（ADR）：对应设计文档 D1-D7
+    ├── adr/                              # 架构决策记录（ADR）：对应设计文档 D1-D5
     │   ├── README.md
-    │   ├── 0001-graph-store-postgres.md
     │   └── 0002-sse-over-websocket.md
     ├── architecture.md                   # 架构详述
     ├── api_reference.md                  # API 接口文档

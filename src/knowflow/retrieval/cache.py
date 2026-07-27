@@ -55,15 +55,14 @@ class RetrievalCache:
         query: str,
         *,
         top_k: int,
-        with_expand: bool,
         with_rerank: bool,
     ) -> str:
         """md5(query+检索参数) 作 key, 避免特殊字符与超长 query.
 
-        检索参数(返回条数/扩展开关/精排开关)必须进 key: 同一 query 不同参数
+        检索参数(返回条数/精排开关)必须进 key: 同一 query 不同参数
         会产生不同结果, 否则参数不一致的请求会命中彼此的缓存返回错误结果.
         """
-        digest = hashlib.md5(f"{query}|{top_k}|{with_expand}|{with_rerank}".encode()).hexdigest()
+        digest = hashlib.md5(f"{query}|{top_k}|{with_rerank}".encode()).hexdigest()
         return f"{_KEY_PREFIX}{digest}"
 
     async def get(
@@ -71,7 +70,6 @@ class RetrievalCache:
         query: str,
         *,
         top_k: int,
-        with_expand: bool,
         with_rerank: bool,
     ) -> list[ChunkScore] | None:
         """读缓存.
@@ -79,7 +77,6 @@ class RetrievalCache:
         Args:
             query: 查询文本.
             top_k: 返回条数(参与缓存键).
-            with_expand: 是否启用一跳扩展(参与缓存键).
             with_rerank: 是否启用精排(参与缓存键).
 
         Returns:
@@ -89,9 +86,7 @@ class RetrievalCache:
         if redis is None:
             return None
         try:
-            key = self._make_key(
-                query, top_k=top_k, with_expand=with_expand, with_rerank=with_rerank
-            )
+            key = self._make_key(query, top_k=top_k, with_rerank=with_rerank)
             raw = await redis.get(key)
             if raw is None:
                 return None
@@ -107,7 +102,6 @@ class RetrievalCache:
         results: Sequence[ChunkScore],
         *,
         top_k: int,
-        with_expand: bool,
         with_rerank: bool,
     ) -> None:
         """写缓存.
@@ -116,16 +110,13 @@ class RetrievalCache:
             query: 查询文本.
             results: 检索结果列表.
             top_k: 返回条数(参与缓存键).
-            with_expand: 是否启用一跳扩展(参与缓存键).
             with_rerank: 是否启用精排(参与缓存键).
         """
         redis = self._get_redis()
         if redis is None:
             return
         try:
-            key = self._make_key(
-                query, top_k=top_k, with_expand=with_expand, with_rerank=with_rerank
-            )
+            key = self._make_key(query, top_k=top_k, with_rerank=with_rerank)
             data = json.dumps(
                 [{"chunk_id": r.chunk_id, "score": r.score, "source": r.source} for r in results]
             )
@@ -138,7 +129,6 @@ class RetrievalCache:
         query: str,
         *,
         top_k: int,
-        with_expand: bool,
         with_rerank: bool,
     ) -> None:
         """失效单条缓存(参数须与写入时一致)."""
@@ -146,9 +136,7 @@ class RetrievalCache:
         if redis is None:
             return
         try:
-            key = self._make_key(
-                query, top_k=top_k, with_expand=with_expand, with_rerank=with_rerank
-            )
+            key = self._make_key(query, top_k=top_k, with_rerank=with_rerank)
             await redis.delete(key)
         except Exception as exc:
             logger.warning("cache.invalidate_failed", error=str(exc))

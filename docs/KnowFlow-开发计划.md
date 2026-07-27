@@ -134,7 +134,7 @@ chore: bump langgraph to 0.2.40
 ## 三、Phase 总览
 
 ```
-P0 脚手架 ─▶ P1 基础设施 ─▶ P2 数据模型 ─┬─▶ P3 GraphRAG 检索 ─▶ P5 对话链路 ─┬─▶ P8 编排
+P0 脚手架 ─▶ P1 基础设施 ─▶ P2 数据模型 ─┬─▶ P3 混合检索 ─▶ P5 对话链路 ─┬─▶ P8 编排
                                          └─▶ P4 API+文档服务 ────────────────┴─▶ P10 可观测/评测
                                                                    │
                                         P6 工具治理 ◀──────────────┤
@@ -148,7 +148,7 @@ P11 工程化收尾（面试就绪）
 | P0 | 项目脚手架与工程规范 | 0.5-1 天 | 必做 | M1 |
 | P1 | 核心基础设施与本地依赖 | 1-2 天 | 必做 | M1 |
 | P2 | ORM 模型、迁移与 Repository | 1-2 天 | 必做 | M1 |
-| P3 | GraphRAG 检索模块 | 3-4 天 | 必做（核心亮点） | M2 |
+| P3 | 混合检索模块 | 3-4 天 | 必做（核心亮点） | M2 |
 | P4 | API 层、文档服务与异步索引 | 2-3 天 | 必做 | M3 |
 | P5 | 对话链路与 SSE 流式 | 2-3 天 | 必做 | M4 |
 | P6 | 工具治理与 Skill 体系 | 2-3 天 | 必做（核心亮点） | M5 |
@@ -165,7 +165,7 @@ P11 工程化收尾（面试就绪）
 | 里程碑 | 包含 Phase | 名称 | 预计 | 分组理由 |
 |---|---|---|---|---|
 | M1 | P0 + P1 + P2 | 项目底座：脚手架 + 基础设施 + 数据模型 | 3-4 天 | 同属地基层，验收机械，一次完成 |
-| M2 | P3 | GraphRAG 检索 | 3-4 天 | 核心亮点，评测集与指标需专注验收 |
+| M2 | P3 | 混合检索 | 3-4 天 | 核心亮点，评测集与指标需专注验收 |
 | M3 | P4 | API 层与异步索引 | 2-3 天 | 内容独立 |
 | M4 | P5 | 对话链路与 SSE 流式 | 2-3 天 | 最小可用闭环里程碑 |
 | M5 | P6 + P9 | 工具治理与沙盒文件系统 | 3-4 天 | file_tools 直接接真实沙盒，避免占位返工 |
@@ -264,55 +264,52 @@ uv run ruff check src/ && uv run mypy src/    # 0 errors
 **任务清单**：
 
 1. `models/base.py`：DeclarativeBase + `TimestampMixin`（created_at/updated_at）
-2. 按《项目结构》models/ 清单实现 9 个模型文件（document/graph/session/agent/tool/memory/trace/eval 共约 13 个模型类），建立外键关系与索引
-3. Alembic 初始化 + 生成首个迁移：`uv run alembic revision --autogenerate -m "init schema"`，检查生成的迁移 SQL 符合设计（尤其 entities/relations/agent_runs/task_delegations/checkpoints/long_term_memories/trace_spans 与 3.4 一致）
+2. 按《项目结构》models/ 清单实现 8 个模型文件（document/session/agent/tool/memory/trace/eval 共约 10 个模型类），建立外键关系与索引
+3. Alembic 初始化 + 生成首个迁移：`uv run alembic revision --autogenerate -m "init schema"`，检查生成的迁移 SQL 符合设计（尤其 agent_runs/task_delegations/checkpoints/long_term_memories/trace_spans 与 3.4 一致）
 4. `scripts/init_db.py`：建库 + `alembic upgrade head` 封装
-5. `db/repositories/` 实现 5 个 repo：document_repo（文档/分块 CRUD + 分页）、graph_repo（实体/关系 upsert + **一跳扩展 SQL**）、session_repo（会话/消息）、agent_repo（run/委派/checkpoint 层级查询）、trace_repo（写入/按 trace_id 查询）
-6. 单测：每个 repo 用 SQLite+aiosqlite（或 testcontainers PG，推荐前者简单）验证 CRUD 与一跳扩展 SQL 正确性
+5. `db/repositories/` 实现 4 个 repo：document_repo（文档/分块 CRUD + 分页）、session_repo（会话/消息）、agent_repo（run/委派/checkpoint 层级查询）、trace_repo（写入/按 trace_id 查询）
+6. 单测：每个 repo 用 SQLite+aiosqlite（或 testcontainers PG，推荐前者简单）验证 CRUD 正确性
 
 **验收标准**：
 
 ```bash
 uv run python scripts/init_db.py                    # 建库 + 迁移成功
 uv run alembic current                              # 显示 head
-uv run pytest tests/unit -q                         # repo 单测全绿（含一跳扩展 JOIN 用例）
+uv run pytest tests/unit -q                         # repo 单测全绿
 uv run ruff check src/ && uv run mypy src/          # 0 errors
-# 手工验证（psql 或 python）：插入 2 个 chunk + 实体 + 关系，执行一跳扩展 SQL 返回正确关联 chunk
 ```
 
 ---
 
-### P3 · GraphRAG 检索模块（核心亮点一）
+### P3 · 混合检索模块（核心亮点一）
 
-**对应设计文档**：3.4 模块一、2.5 指标（Recall@10 +8%）；《项目结构》retrieval/
+**对应设计文档**：3.4 模块一；《项目结构》retrieval/
 
 **任务清单**：
 
 1. `indexer/`：parser 调度 + pdf/docx/markdown/text 四类解析器（PyMuPDF / python-docx / markdown 库）、splitter（递归分块，默认 chunk_size=512、overlap=64，参数进配置）、cleaner（空白规范化/去噪）
-2. `embedding.py`：EmbeddingClient 封装（sentence-transformers `BAAI/bge-m3` 本地或 API 兼容），批量接口 + 维度写入配置
-3. `entity_extractor.py`：LLM 抽取（JSON 输出 schema：entities[{name,type}] + relations[{source,target,relation_type}]），异常重试 + 输出解析兜底，实体归一（小写化/别名表）
-4. `graph_store.py` / `vector_store.py` / `bm25_store.py`：分别对接 PG 图谱表、Milvus collection（script `init_milvus.py` 建 collection + 索引）、PG tsvector 全文索引
-5. `hybrid_search.py`：向量 + BM25 双路召回 → **RRF 融合**（k=60 经典参数），返回统一 ChunkScore
-6. `expander.py`：从召回 chunk 提取实体 ID → `graph_repo.one_hop_expand` → 召回关联 chunk → 去重合并（保留原始分数）
-7. `reranker.py`：cross-encoder（`BAAI/bge-reranker-v2-m3` 本地或 API），对 (query, chunk) 打分重排，默认 top_k=10
-8. `retriever.py`：`GraphRAGRetriever` 统一入口（hybrid → expand → rerank），返回带来源元数据的检索结果
-9. `cache.py`：query hash + TTL 缓存（Redis），命中跳过全链路
-10. `pipeline.py`：`RetrievalPipeline.index_document()` 编排完整索引链路（解析→分块→embedding→实体抽取→三写入库），支持增量/重建
-11. **评测集**：构建 `eval/datasets/retrieval_eval.jsonl`（50-100 条：query + 相关 chunk_id 标注，用 3-5 篇真实业务文档如产品手册/HR 政策做语料）
-12. `eval/scripts/compare_baseline.py`：同一评测集上对比纯 Hybrid vs GraphRAG（hybrid+扩展），输出 Recall@10/MRR 对比表与提升幅度
+2. `embedding.py`：EmbeddingClient 封装（Ollama embedding 批量接口），批量调用 + 维度写入配置
+3. `vector_store.py` / `bm25_store.py`：分别对接 Milvus collection（script `init_milvus.py` 建 collection + 索引）、BM25 应用内存索引（启动时从 chunks 表全量加载）
+4. `hybrid_search.py`：向量 + BM25 双路召回 → **RRF 融合**（k=60 经典参数），返回统一 ChunkScore
+5. `reranker.py`：本地交叉编码器对 (query, chunk) 打分重排，默认 top_k=10
+6. `retriever.py`：`HybridRetriever` 统一入口（hybrid → rerank → 缓存），返回带来源元数据的检索结果
+7. `cache.py`：query hash + TTL 缓存（Redis），命中跳过全链路
+8. `pipeline.py`：`RetrievalPipeline.index_document()` 编排完整索引链路（解析→分块→embedding→向量/BM25 双写入库），支持增量/重建
+9. **评测集**：构建 `eval/datasets/retrieval_eval.jsonl`（50-100 条：query + 相关 chunk_id 标注，用 3-5 篇真实业务文档如产品手册/HR 政策做语料）
+10. `eval/scripts/run_eval.py`：检索评测跑通，输出 Recall@10/MRR 报告
 
 **验收标准**：
 
 ```bash
 uv run python scripts/init_milvus.py                # collection 创建成功
 # 上传 3 篇真实文档完成索引（先走 pipeline.py 脚本直调，P4 接 API）
-uv run pytest tests/unit/retrieval -q               # splitter/extractor/graph_store/hybrid/expander/reranker 全绿
-uv run python eval/scripts/compare_baseline.py      # 输出对比报告：GraphRAG 相对 Hybrid Recall@10 提升 ≥ 8%
-# 报告存入 eval/reports/compare_2026xxxx.md（面试证据）
+uv run pytest tests/unit/retrieval -q               # splitter/vector/bm25/hybrid/reranker/pipeline 全绿
+uv run python eval/scripts/run_eval.py              # 输出检索评测报告
+# 报告存入 eval/reports/（面试证据）
 uv run ruff check src/ && uv run mypy src/          # 0 errors
 ```
 
-**面试要点**：能讲清 RRF 原理、一跳扩展的 SQL、评测集怎么标注的（ground truth 从哪来）、为什么用 PG 不用 Neo4j。
+**面试要点**：能讲清 RRF 原理、向量/BM25 双路召回为什么互补、评测集怎么标注的（ground truth 从哪来）、向量库异常时怎么降级。
 
 ---
 
@@ -373,7 +370,7 @@ uv run python scripts/gen_openapi.py                                 # 生成 op
 
 ```bash
 curl -N -X POST http://localhost:8000/api/v1/chat/stream -H "Content-Type: application/json" \
-  -d '{"session_id":"s1","message":"介绍一下公司报销流程"}'          # 看到 retrieval→token...→done 完整事件流
+  -d '{"session_id":1,"message":"介绍一下公司报销流程"}'          # 看到 retrieval→token...→done 完整事件流
 # 首 token 时间 < 800ms（脚本计时，记录到 docs/benchmarks/）
 uv run pytest tests/e2e/test_chat_stream_e2e.py -q                  # 全绿
 # 多轮追问（同一 session_id）能引用上文
@@ -522,8 +519,7 @@ uv run pytest tests/unit/sandbox -q                               # 全绿
 5. `observability/eval/`：runner（跑评测集）/ dataset（加载/校验）/ metrics（Recall@K/MRR/NDCG/FC 准确率）/ report（Markdown 报告生成）
 6. `eval/datasets/knowledge_qa_eval.jsonl`：50-100 条 QA 对（含参考答案要点 + 相关 chunk 标注）
 7. `eval/scripts/run_eval.py`：统一评测入口（检索评测 + QA 评测 + 工具准确率），输出报告
-8. `eval/scripts/compare_baseline.py` 完善：Hybrid vs GraphRAG 全指标对比
-9. **复现 P3/P6/P8 全部指标**：把三个 benchmark 脚本结果汇总成一份总报告 `eval/reports/final_report.md`（每个指标附：方法/数据集/结果/结论）
+8. **复现 P3/P6/P8 全部指标**：把三个 benchmark 脚本结果汇总成一份总报告 `eval/reports/final_report.md`（每个指标附：方法/数据集/结果/结论）
 10. `observability/dashboard.py`：简单聚合（对话数/耗时分布/工具成功率/Trace 数），提供只读接口
 
 **验收标准**：
@@ -531,7 +527,7 @@ uv run pytest tests/unit/sandbox -q                               # 全绿
 ```bash
 uv run python eval/scripts/run_eval.py --all                      # 输出完整评测报告
 cat eval/reports/final_report.md                                  # 五个指标全部有实测数据：
-#   GraphRAG Recall@10 提升 ≥8%、可见工具数 -34.2%、Schema Token -32.6%、FC 准确率 ≥94%、并发 -77.6%
+#   检索 Recall@10 33.6%、可见工具数 -34.2%、Schema Token -32.6%、FC 准确率 ≥94%、并发 -77.6%
 curl "http://localhost:8000/api/v1/traces/{session_id}"           # 完整 trace 树（agent/tool/retrieval 各层 span）
 curl -X POST http://localhost:8000/api/v1/traces/replay -d '{"session_id":"..."}'   # replay 成功
 uv run pytest tests/integration -q                                # 全绿

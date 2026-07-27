@@ -6,11 +6,6 @@ from knowflow.db.repositories.document_repo import (
     DocumentIndexRepo,
     DocumentRepo,
 )
-from knowflow.db.repositories.graph_repo import (
-    EntityAliasRepo,
-    EntityRepo,
-    RelationRepo,
-)
 from knowflow.db.repositories.session_repo import MessageRepo, SessionRepo, TurnRepo
 from knowflow.db.repositories.trace_repo import TraceEventRepo, TraceSpanRepo
 
@@ -19,10 +14,7 @@ __all__ = [
     "ChunkRepo",
     "DocumentIndexRepo",
     "DocumentRepo",
-    "EntityAliasRepo",
-    "EntityRepo",
     "MessageRepo",
-    "RelationRepo",
     "SessionRepo",
     "TaskDelegationRepo",
     "TraceEventRepo",
