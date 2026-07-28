@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowflow.api.sse import make_event
 from knowflow.core.config import Settings, get_settings
-from knowflow.core.exceptions import NotFoundError, ValidationError
+from knowflow.core.exceptions import NotFoundError
 from knowflow.core.llm import get_chat_llm
 from knowflow.core.logging import get_logger
 from knowflow.db.repositories.session_repo import MessageRepo, SessionRepo, TurnRepo
@@ -61,7 +61,7 @@ class ChatService:
 
     Args:
         session: 请求级 AsyncSession(事务由服务管理).
-        retriever: GraphRAGRetriever 或 fake(实现 async retrieve).
+        retriever: HybridRetriever 或 fake(实现 async retrieve).
         llm: langchain BaseChatModel 或 fake(实现 ainvoke/astream). None 时懒加载单例.
         settings: Settings 单例.
         orchestrator: ToolOrchestrator(实现 async run)或 fake. None 时走直连检索链路.
@@ -113,17 +113,13 @@ class ChatService:
             logger.warning("chat.query_rewrite_failed_fallback", error=str(exc))
             return query
 
-    async def _ensure_session(self, session_id: str | None, user_id: str | None) -> int:
+    async def _ensure_session(self, session_id: int | None, user_id: str | None) -> int:
         """校验/创建会话, 返回会话 id."""
         if session_id is not None:
-            try:
-                sid = int(session_id)
-            except ValueError:
-                raise ValidationError(f"非法 session_id: {session_id}") from None
-            sess = await self._sessions.get(sid)
+            sess = await self._sessions.get(session_id)
             if sess is None:
                 raise NotFoundError(f"会话不存在: session_id={session_id}")
-            return sid
+            return session_id
         # 未传 session_id 时新建会话(标题留空, P7 可自动生成)
         sess = await self._sessions.create(user_id=user_id)
         return int(sess.id)
@@ -375,7 +371,7 @@ class ChatService:
             "chat.completed", session_id=session_id, tokens=tokens, latency_ms=round(latency_ms, 2)
         )
         return ChatResponse(
-            session_id=str(session_id),
+            session_id=session_id,
             answer=answer,
             citations=citations,
             tool_calls=tool_calls,
@@ -697,7 +693,7 @@ class ChatService:
         yield make_event(
             "done",
             {
-                "session_id": str(session_id),
+                "session_id": session_id,
                 "citations": [c.model_dump() for c in citations],
                 "tool_calls": tool_calls,
                 "latency_ms": round(latency_ms, 2),

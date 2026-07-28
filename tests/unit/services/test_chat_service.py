@@ -3,9 +3,10 @@
 import json
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from knowflow.core.exceptions import NotFoundError, ValidationError
+from knowflow.core.exceptions import NotFoundError
 from knowflow.db.repositories.session_repo import MessageRepo, TurnRepo
 from knowflow.schemas.chat import ChatRequest
 from knowflow.services.chat_service import ChatService
@@ -49,14 +50,14 @@ async def test_chat_creates_session_and_persists(db_session: AsyncSession) -> No
     assert resp.answer == llm.answer
     assert len(resp.citations) == 1
     assert resp.citations[0].chunk_id == 1
-    assert resp.session_id.isdigit()
+    assert isinstance(resp.session_id, int)
 
-    messages = await MessageRepo(db_session).list_by_session(int(resp.session_id))
+    messages = await MessageRepo(db_session).list_by_session(resp.session_id)
     assert [m.role for m in messages] == ["user", "assistant"]
     assert messages[1].content == llm.answer
     assert messages[1].citations["citations"][0]["chunk_id"] == 1
 
-    turns = await TurnRepo(db_session).list_by_session(int(resp.session_id))
+    turns = await TurnRepo(db_session).list_by_session(resp.session_id)
     assert len(turns) == 1
 
 
@@ -138,13 +139,13 @@ async def test_chat_rewrite_failure_falls_back(db_session: AsyncSession) -> None
 async def test_chat_session_not_found(db_session: AsyncSession) -> None:
     """指定不存在的 session_id 抛 NotFoundError."""
     with pytest.raises(NotFoundError):
-        await _service(db_session).chat(ChatRequest(message="hi", session_id="999"))
+        await _service(db_session).chat(ChatRequest(message="hi", session_id=999))
 
 
-async def test_chat_invalid_session_id(db_session: AsyncSession) -> None:
-    """非法 session_id 抛 ValidationError."""
+def test_chat_invalid_session_id() -> None:
+    """非数字 session_id 在 schema 层被拒."""
     with pytest.raises(ValidationError):
-        await _service(db_session).chat(ChatRequest(message="hi", session_id="abc"))
+        ChatRequest(message="hi", session_id="abc")
 
 
 async def test_stream_events_sequence(db_session: AsyncSession) -> None:
@@ -167,7 +168,7 @@ async def test_stream_events_sequence(db_session: AsyncSession) -> None:
     assert "".join(tokens) == "这是来自KnowFlow的回复。"
 
     done = json.loads(events[-1]["data"])
-    assert done["session_id"].isdigit()
+    assert isinstance(done["session_id"], int)
     assert done["citations"][0]["chunk_id"] == 1
     assert done["latency_ms"] >= 0
 
@@ -179,10 +180,10 @@ async def test_stream_persists_messages_and_turn(db_session: AsyncSession) -> No
         events.append(e)
 
     done = json.loads(events[-1]["data"])
-    messages = await MessageRepo(db_session).list_by_session(int(done["session_id"]))
+    messages = await MessageRepo(db_session).list_by_session(done["session_id"])
     assert len(messages) == 2
     assert messages[1].role == "assistant"
-    turns = await TurnRepo(db_session).list_by_session(int(done["session_id"]))
+    turns = await TurnRepo(db_session).list_by_session(done["session_id"])
     assert len(turns) == 1
 
 
@@ -228,7 +229,7 @@ async def test_chat_with_orchestrator_runs_tools(db_session: AsyncSession) -> No
     assert llm.invoke_calls == 0
     assert orc.run_calls[0]["context"] == "[1] 报销流程: 填写报销单并提交部门审批。"
 
-    messages = await MessageRepo(db_session).list_by_session(int(resp.session_id))
+    messages = await MessageRepo(db_session).list_by_session(resp.session_id)
     assert messages[1].citations["tool_calls"][0]["tool"] == "calculator"
 
 
@@ -424,7 +425,7 @@ async def test_chat_uses_multi_agent_for_complex_task(db_session: AsyncSession) 
     assert multi.run_calls[0]["query"] == "对比 A 和 B 的价格"
     assert "报销流程" in multi.run_calls[0]["context"]  # 预检索上下文注入
 
-    messages = await MessageRepo(db_session).list_by_session(int(resp.session_id))
+    messages = await MessageRepo(db_session).list_by_session(resp.session_id)
     assert messages[1].content == "A 售价 100, B 售价 200"
 
 

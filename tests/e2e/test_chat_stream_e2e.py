@@ -74,5 +74,5 @@ def test_chat_stream_real_llm(client: TestClient) -> None:
     assert answer.strip(), "回答内容为空"
 
     done = json.loads(events[-1][1])
-    assert done["session_id"].isdigit()
+    assert isinstance(done["session_id"], int)
     assert done["citations"][0]["chunk_id"] == 1

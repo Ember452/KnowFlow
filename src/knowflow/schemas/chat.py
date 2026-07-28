@@ -22,7 +22,7 @@ class Citation(BaseModel):
 class ChatRequest(BaseModel):
     """对话请求."""
 
-    session_id: str | None = Field(default=None, description="会话 id; 为空则新建会话")
+    session_id: int | None = Field(default=None, description="会话 id; 为空则新建会话")
     message: str = Field(min_length=1, max_length=8000, description="用户消息")
     user_id: str | None = Field(default=None, description="用户标识, 新建会话时使用")
     stream: bool = Field(default=False, description="是否流式(SSE)")
@@ -31,7 +31,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """同步对话响应."""
 
-    session_id: str
+    session_id: int
     answer: str
     citations: list[Citation] = Field(default_factory=list)
     tool_calls: list[dict] = Field(

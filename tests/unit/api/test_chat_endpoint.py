@@ -41,7 +41,7 @@ def test_chat_sync_returns_answer_and_citations(client: TestClient) -> None:
     assert data["answer"] == "这是来自 KnowFlow 的回复。"
     assert len(data["citations"]) == 1
     assert data["citations"][0]["chunk_id"] == 1
-    assert data["session_id"].isdigit()
+    assert isinstance(data["session_id"], int)
 
 
 def test_chat_stream_events_sequence(client: TestClient) -> None:
@@ -64,7 +64,7 @@ def test_chat_stream_events_sequence(client: TestClient) -> None:
     assert "".join(tokens) == "这是来自KnowFlow的回复。"
 
     done = json.loads(events[-1][1])
-    assert done["session_id"].isdigit()
+    assert isinstance(done["session_id"], int)
     assert done["citations"][0]["chunk_id"] == 1
 
 

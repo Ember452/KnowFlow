@@ -41,8 +41,6 @@ secrets.yaml
 # ── IDE ──
 .idea/
 .vscode/
-.trae/
-.workbuddy/
 *.swp
 *.swo
 *~
@@ -63,13 +61,13 @@ logs/
 
 # ── 文档构建 ──
 site/
-
+.trae/
+.workbuddy/
 # ── 临时文件 ──
 *.tmp
 *.bak
 tmp/
 
 # ── 评测与报告（指标报告为面试证据, 必须入库, 不忽略）──
-
 # 由 scripts/gen_openapi.py 生成, 不入库
 openapi.json
