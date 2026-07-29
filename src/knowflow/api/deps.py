@@ -180,12 +180,19 @@ def set_tool_registry(registry: Any) -> None:
 
 def dispose_tools() -> None:
     """释放工具治理单例."""
-    global _skill_manager, _tool_registry, _orchestrator, _context_manager, _multi_agent
+    global \
+        _skill_manager, \
+        _tool_registry, \
+        _orchestrator, \
+        _context_manager, \
+        _multi_agent, \
+        _report_service
     _skill_manager = None
     _tool_registry = None
     _orchestrator = None
     _context_manager = None
     _multi_agent = None
+    _report_service = None
 
 
 SkillManagerDep = Annotated[Any, Depends(get_skill_manager)]
@@ -342,3 +349,67 @@ def get_embedding_dep() -> Any:
 
 
 EmbeddingDep = Annotated[Any, Depends(get_embedding_dep)]
+
+
+# ── 报告流水线(懒加载单例, 测试可覆盖) ──
+
+_report_service: Any = None
+
+
+class _SessionRecaller:
+    """请求级长期记忆召回器: 每次调用独立 session(报告调研/记忆工具懒加载用)."""
+
+    async def recall(self, query: str, user_id: str, top_k: int | None = None) -> list[Any]:
+        from knowflow.db.base import get_session_factory
+        from knowflow.memory.long_term import LongTermMemoryManager
+        from knowflow.retrieval.embedding import get_embedding_client
+
+        factory = get_session_factory()
+        async with factory() as session:
+            manager = LongTermMemoryManager(session, embedding_client=get_embedding_client())
+            return await manager.recall(query, user_id, top_k=top_k)
+
+
+def get_report_service() -> Any:
+    """ReportService 单例: 报告流水线 + 发布器装配.
+
+    依赖未就绪(如 LLM/检索器不可用)时返回 None, 报告端点返回 503(不阻塞对话链路).
+    测试可用 set_report_service 注入 fake.
+    """
+    global _report_service
+    if _report_service is not None:
+        return _report_service
+    try:
+        from knowflow.agents.report.pipeline import ReportPipeline
+        from knowflow.agents.report.publisher import McpPublishAdapter, ReportPublisher
+        from knowflow.core.llm import get_chat_llm
+        from knowflow.db.minio import get_minio
+        from knowflow.sandbox.workspace import WorkspaceManager
+        from knowflow.services.report_service import ReportService
+        from knowflow.tools.builtin.search_tool import SearchTool
+
+        _report_service = ReportService(
+            pipeline=ReportPipeline(
+                llm=get_chat_llm(),
+                retriever=get_retriever(),
+                recaller=_SessionRecaller(),
+                search=SearchTool(),
+                workspace_manager=WorkspaceManager(get_minio()),
+            ),
+            # 发布器: 经 MCP 注册表解析 mcp_feishu_* 工具; 未配置飞书时发布返回可读降级提示
+            publisher=ReportPublisher(adapter=McpPublishAdapter(get_tool_registry())),
+        )
+        logger.info("deps.report_service_initialized")
+    except Exception as exc:
+        logger.warning("deps.report_service_unavailable", error=str(exc))
+        _report_service = None
+    return _report_service
+
+
+def set_report_service(service: Any) -> None:
+    """测试注入 report_service(fake 或 None)."""
+    global _report_service
+    _report_service = service
+
+
+ReportServiceDep = Annotated[Any, Depends(get_report_service)]

@@ -10,6 +10,7 @@ from knowflow.api.v1.endpoints import (
     health,
     knowledge,
     memory,
+    report,
     skill,
     tools,
     trace,
@@ -26,3 +27,4 @@ router.include_router(tools.router)
 router.include_router(memory.router)
 router.include_router(trace.router)
 router.include_router(eval.router)
+router.include_router(report.router)
