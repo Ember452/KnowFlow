@@ -1949,3 +1949,33 @@ $env:GIT_COMMITTER_DATE = "2026-07-26T19:22:00+08:00"
 git add docs/resume_writing.md
 git commit -m "docs: 移除简历写作文档"
 ```
+
+---
+
+### 128. refactor(retrieval): 移除 PostgreSQL 图谱检索功能
+
+- **提交时间**：2026-07-27 10:00
+- **说明**：删除 GraphRAG 图谱功能：entity_extractor/graph_store/expander 模块、graph_repo 与 graph 模型、entities/entity_aliases/relations 三表（迁移 0001）与 /knowledge/graph 接口；GraphRAGRetriever 更名 HybridRetriever，检索链路简化为 hybrid→rerank→缓存；索引链路改为向量/BM25 双写；同步删除图谱单测与 compare_baseline 对比脚本、前端图谱页面/演示脚本图谱模块，设计文档/开发计划/结构文档/ADR/面试叙事/指标测试文档中的图谱内容同步更新为混合检索口径。
+- **变更文件**：`src/knowflow/models/graph.py`（删除）、`src/knowflow/db/repositories/graph_repo.py`（删除）、`src/knowflow/retrieval/entity_extractor.py`（删除）、`graph_store.py`（删除）、`expander.py`（删除）、`pipeline.py`、`retriever.py`、`cache.py`、`src/knowflow/tasks/index_task.py`、`src/knowflow/api/deps.py`、`src/knowflow/api/v1/endpoints/knowledge.py`、`src/knowflow/schemas/knowledge.py`、`eval.py`、`src/knowflow/db/migrations/versions/0001_init_schema.py`、`src/knowflow/db/repositories/__init__.py`、`models/__init__.py`、`tools/builtin/retrieval_tool.py`、`agents/main_agent.py`、`main.py`、`observability/eval/runner.py`、`tests/unit/db/test_graph_repo.py`（删除）、`tests/unit/retrieval/test_entity_extractor.py`（删除）、`test_expander.py`（删除）、`test_graph_store.py`（删除）、`test_pipeline.py`、`test_retriever.py`、`test_cache.py`、`tests/unit/tasks/test_index_task.py`、`tests/integration/test_index_pipeline.py`、`tests/unit/agents/test_orchestrator.py`、`tests/unit/api/test_knowledge_endpoint.py`、`test_schemas.py`、`eval/scripts/compare_baseline.py`（删除）、`eval/scripts/run_eval.py`、`scripts/demo.html`、`scripts/demo.js`、`docs/adr/0001-graph-store-postgres.md`（删除）、`0002-one-hop-expand.md`（删除）、`docs/KnowFlow-项目设计文档.md`、`KnowFlow-项目结构.md`、`KnowFlow-开发计划.md`、`api_reference.md`、`architecture.md`、`interview_story.md`、`docs/tests/指标测试-API与异步索引.md`、`指标测试-检索.md`、`pyproject.toml`、`skills/report_writing/SKILL.md`、`README.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-27T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-27T10:00:00+08:00"
+git add src/knowflow/models/ src/knowflow/db/repositories/ src/knowflow/retrieval/ src/knowflow/tasks/index_task.py src/knowflow/api/ src/knowflow/schemas/knowledge.py src/knowflow/schemas/eval.py src/knowflow/tools/builtin/retrieval_tool.py src/knowflow/agents/main_agent.py src/knowflow/main.py src/knowflow/observability/eval/runner.py tests/ eval/scripts/ scripts/demo.html scripts/demo.js docs/ pyproject.toml skills/report_writing/SKILL.md README.md
+git commit -m "refactor(retrieval): 移除 PostgreSQL 图谱检索功能"
+```
+
+---
+
+### 129. chore: 移除 React 前端并统一会话 id 类型
+
+- **提交时间**：2026-07-28 10:00
+- **说明**：删除 web/ React 前端目录（12 个页面，保留 scripts/demo.html 零依赖演示前端）；ChatRequest/ChatResponse 的 session_id 由 str 统一为 int，同步适配对话服务/端点/链路测试与对话指标测试文档（chat_service.py 内图谱注释同步更新）；.gitignore 整理工具目录忽略段。
+- **变更文件**：`web/`（整体删除）、`.gitignore`、`src/knowflow/schemas/chat.py`、`src/knowflow/services/chat_service.py`、`docs/tests/指标测试-对话链路.md`、`tests/e2e/test_chat_stream_e2e.py`、`tests/unit/api/test_chat_endpoint.py`、`tests/unit/services/test_chat_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-28T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-28T10:00:00+08:00"
+git add web/ .gitignore src/knowflow/schemas/chat.py src/knowflow/services/chat_service.py docs/tests/指标测试-对话链路.md tests/e2e/test_chat_stream_e2e.py tests/unit/api/test_chat_endpoint.py tests/unit/services/test_chat_service.py
+git commit -m "chore: 移除 React 前端并统一会话 id 类型"
+```
