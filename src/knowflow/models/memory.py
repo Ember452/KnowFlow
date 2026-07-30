@@ -1,7 +1,8 @@
 """记忆模型. LongTermMemory / MemorySummary / MemoryConflict.
 
 与设计文档 3.4 模块六一致, long_term_memories 表用 created_at/last_recall(无 updated_at).
-embedding 字段 P2 用 LargeBinary, P7 评估迁移 pgvector VECTOR(1024).
+embedding 字段用 LargeBinary(JSON 序列化), embedding_vec 为 pgvector VECTOR(1024)
+(去重写入走数据库向量 top-N, 减少全量拉取).
 """
 
 from datetime import datetime
@@ -9,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from knowflow.models.base import Base, IDMixin, TimestampMixin, VectorField
+from knowflow.models.base import Base, IDMixin, PgVectorField, TimestampMixin, VectorField
 
 
 class LongTermMemory(Base, IDMixin):
@@ -26,6 +27,8 @@ class LongTermMemory(Base, IDMixin):
     importance: Mapped[float] = mapped_column(Float, nullable=False, comment="0-10 重要性分数")
     # P2 用 LargeBinary 存序列化向量, P7 评估迁移 pgvector VECTOR(1024)
     embedding: Mapped[bytes | None] = mapped_column(VectorField, nullable=True)
+    # P7 pgvector 向量列: 去重写入在数据库做近似 top-N 检索(非 PG 自动降级为空列)
+    embedding_vec: Mapped[list[float] | None] = mapped_column(PgVectorField(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -61,30 +61,70 @@ class LongTermMemoryManager:
         )
 
     async def _find_duplicate(self, user_id: str, content: str) -> LongTermMemory | None:
-        """查找与 content 高度相似的已有记忆(语义优先, 无 embedding 时文本兜底)."""
-        memories = await self._store.list_by_user(user_id)
-        if not memories:
-            return None
+        """查找与 content 高度相似的已有记忆(语义优先, 无 embedding 时文本兜底).
+
+        语义路径优先走数据库向量 top-N(pgvector, 余弦相似度下推 SQL),
+        只回传少量候选再做精确余弦二次校验; 数据库路径不可用(非 PG /
+        无扩展 / 用户存在未向量化存量数据)时降级 Python 全量扫描,
+        判定逻辑与旧版完全一致.
+        """
         threshold = self._settings.memory_dedup_threshold
+        vec = await self._embed_for_dedup(content)
+        if vec:
+            candidates = await self._store.find_duplicate_candidates(
+                user_id, vec, self._settings.memory_dedup_candidate_count
+            )
+            if candidates is not None:
+                best, best_sim = self._best_by_cosine(candidates, vec)
+                if best is not None and best_sim >= threshold:
+                    return best
+                return None
+            # 数据库路径不可用: 降级 Python 全量扫描(旧逻辑)
+            memories = await self._store.list_by_user(user_id)
+            if memories:
+                best, best_sim = self._best_by_cosine(memories, vec)
+                if best is not None:
+                    return best if best_sim >= threshold else None
+                # 全部无向量: 文本相似度兜底
+                return await self._find_duplicate_text(user_id, content, threshold)
+            return None
+        # 无 embedding 或 embedding 失败: 文本相似度兜底
+        return await self._find_duplicate_text(user_id, content, threshold)
+
+    async def _embed_for_dedup(self, content: str) -> list[float]:
+        """去重用 embedding; 无客户端或失败返回空列表(走文本兜底)."""
+        if self._embedding is None:
+            return []
+        try:
+            return await asyncio.to_thread(self._embedding.embed_one, content)
+        except Exception as exc:
+            logger.warning("memory.dedup_embedding_failed", error=str(exc))
+            return []
+
+    @staticmethod
+    def _best_by_cosine(
+        memories: list[LongTermMemory], vec: list[float]
+    ) -> tuple[LongTermMemory | None, float]:
+        """候选集内取余弦相似度最高的一条(全部无向量时返回 (None, 0.0))."""
         best: LongTermMemory | None = None
         best_sim = 0.0
-        if self._embedding is not None:
-            try:
-                vec = await asyncio.to_thread(self._embedding.embed_one, content)
-            except Exception as exc:
-                logger.warning("memory.dedup_embedding_failed", error=str(exc))
-                vec = []
-            if vec:
-                for m in memories:
-                    sim = cosine_similarity(vec, deserialize_embedding(m.embedding) or [])
-                    if sim > best_sim:
-                        best_sim, best = sim, m
-        if best is None:
-            # 文本相似度兜底: 无 embedding 或全部无向量(近似表述也算重复)
-            for m in memories:
-                sim = SequenceMatcher(None, content, m.content).ratio()
-                if sim > best_sim:
-                    best_sim, best = sim, m
+        for m in memories:
+            sim = cosine_similarity(vec, deserialize_embedding(m.embedding) or [])
+            if sim > best_sim:
+                best_sim, best = sim, m
+        return best, best_sim
+
+    async def _find_duplicate_text(
+        self, user_id: str, content: str, threshold: float
+    ) -> LongTermMemory | None:
+        """文本相似度兜底: 无 embedding / 全部无向量(近似表述也算重复)."""
+        memories = await self._store.list_by_user(user_id)
+        best: LongTermMemory | None = None
+        best_sim = 0.0
+        for m in memories:
+            sim = SequenceMatcher(None, content, m.content).ratio()
+            if sim > best_sim:
+                best_sim, best = sim, m
         if best is not None and best_sim >= threshold:
             return best
         return None

@@ -8,6 +8,7 @@
 
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, DateTime, Integer, LargeBinary, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -61,10 +62,31 @@ class TimestampMixin:
 VectorField = LargeBinary
 
 
+class PgVectorField(TypeDecorator):
+    """跨数据库 pgvector 向量字段: PG 用 VECTOR(dim), 其他(SQLite)用 LargeBinary.
+
+    让数据库向量检索只在真实 PG 上生效, SQLite 单测自动降级为空列,
+    与 JSONBType 同一套跨库降级思路.
+    """
+
+    impl = LargeBinary
+    cache_ok = True
+
+    def __init__(self, dim: int = 1024) -> None:
+        super().__init__()
+        self._dim = dim
+
+    def load_dialect_impl(self, dialect):  # type: ignore[no-untyped-def]
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(Vector(self._dim))
+        return dialect.type_descriptor(LargeBinary())
+
+
 __all__ = [
     "Base",
     "IDMixin",
     "JSONBType",
+    "PgVectorField",
     "TimestampMixin",
     "VectorField",
 ]

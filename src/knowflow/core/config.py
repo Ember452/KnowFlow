@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     memory_sediment_interval: int = 5  # 每 N 轮对话沉淀短期记忆入长期
     memory_sediment_threshold: float = 6.0  # 沉淀的重要性阈值(0-10)
     memory_dedup_threshold: float = 0.9  # 去重: 与已有记忆相似度达该值视为重复, 覆盖更新
+    memory_dedup_candidate_count: int = 10  # 去重: 数据库向量 top-N 候选条数(再精确校验)
 
     # ── 存储与配额 ──
     session_ttl_seconds: int = 3600
