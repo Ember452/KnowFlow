@@ -96,10 +96,18 @@ class Settings(BaseSettings):
     # ── 工具治理 ──
     skills_dir: str = "skills"  # Skill 声明式定义目录(SKILL.md)
     max_tool_rounds: int = 5  # 工具调用最大轮数
+    mcp_call_timeout_seconds: float = 30.0  # MCP 工具单次调用超时(秒), 防远端 server 挂死
     # MCP Server 接入列表, 每项: {"id": "demo", "command": "python",
-    # "args": ["-m", "knowflow.tools.mcp.servers.demo"], "domain": "skill_only"}
+    # "args": ["-m", "knowflow.tools.mcp.servers.demo"], "domain": "skill_only",
+    # "env": {"...": "..."}, "allow_tools": ["工具名", ...]}
+    # allow_tools 非空时只注册白名单内工具(官方全量 server 接入控制工具膨胀)
     # 启动时经 register_mcp_server 注册进工具注册表(单个不可用降级, 不阻塞启动)
     mcp_servers: list[dict[str, Any]] = []
+
+    # ── 飞书发布(V2 报告平台) ──
+    feishu_app_id: str = ""  # 飞书开放平台自建应用 App ID
+    feishu_app_secret: str = ""  # 飞书开放平台自建应用 App Secret
+    feishu_user_access_token: str = ""  # 用户授权 token(云文档读写, 过期需重新授权)
 
     # ── API 与上传 ──
     cors_origins: str = "*"  # 逗号分隔; dev 放开, prod 收紧

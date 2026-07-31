@@ -32,6 +32,13 @@ async def boom() -> str:
     raise ValueError("boom: 模拟工具执行失败")
 
 
+@server.tool()
+async def slow() -> str:
+    """故意慢响应(调用超时验证用: gateway 超时后降级)."""
+    await asyncio.sleep(30)
+    return "slow: 不应被返回"
+
+
 def main() -> None:
     """stdio 模式启动入口(子进程方式被 McpGateway 拉起)."""
     asyncio.run(server.run_stdio_async())

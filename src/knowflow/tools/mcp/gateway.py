@@ -2,8 +2,11 @@
 
 每次操作建立独立连接(子进程生命周期随连接), 连接/调用失败抛
 McpConnectionError, 由上层(注册工厂/适配器)降级: 工具不可用不阻塞对话.
+调用超时由 mcp_call_timeout_seconds 控制(默认 30s, 超时抛 McpConnectionError),
+防止远端 server 挂死拖死调用方.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -12,6 +15,7 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from knowflow.core.config import Settings, get_settings
 from knowflow.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -38,6 +42,7 @@ class McpGateway:
         command: str,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """初始化.
 
@@ -45,8 +50,11 @@ class McpGateway:
             command: server 启动命令(可执行文件路径).
             args: 启动参数(如 ["-m", "knowflow.tools.mcp.servers.demo"]).
             env: 附加环境变量(叠加在继承环境之上).
+            timeout: 单次工具调用超时秒数; None 取 settings.mcp_call_timeout_seconds.
         """
         self._params = StdioServerParameters(command=command, args=args or [], env=env)
+        settings: Settings = get_settings()
+        self._timeout = timeout if timeout is not None else float(settings.mcp_call_timeout_seconds)
 
     async def list_tools(self) -> list[McpToolInfo]:
         """建立连接并拉取工具清单."""
@@ -65,10 +73,17 @@ class McpGateway:
         """调用远程工具, 返回文本内容拼接结果.
 
         Raises:
-            McpConnectionError: 连接失败或远程工具执行失败(is_error).
+            McpConnectionError: 连接失败/远程工具执行失败(is_error)/调用超时.
         """
         async with self._connect() as session:
-            result = await session.call_tool(name, arguments or {})
+            coro = session.call_tool(name, arguments or {})
+            if self._timeout and self._timeout > 0:
+                try:
+                    result = await asyncio.wait_for(coro, self._timeout)
+                except TimeoutError as exc:
+                    raise McpConnectionError(f"MCP 工具调用超时({self._timeout}s): {name}") from exc
+            else:
+                result = await coro
         if getattr(result, "is_error", False):
             text = self._extract_text(result)
             raise McpConnectionError(f"MCP 工具执行失败({name}): {text or '未知错误'}")

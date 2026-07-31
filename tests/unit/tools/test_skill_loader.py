@@ -151,9 +151,9 @@ def test_load_dir_empty(tmp_path: Path) -> None:
 
 
 def test_load_dir_real_skills() -> None:
-    """加载项目真实 skills/ 目录的 5 个 SKILL.md."""
+    """加载项目真实 skills/ 目录的 6 个 SKILL.md."""
     skills = SkillLoader().load_dir("skills")
-    assert len(skills) == 5
+    assert len(skills) == 6
     names = {s.name for s in skills}
     expected = {
         "knowledge_qa",

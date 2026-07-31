@@ -71,7 +71,12 @@ async def test_register_mcp_server_registers_adapted_tools() -> None:
     """注册工厂把远程工具适配为本地 BaseTool 进 registry(带 server 前缀)."""
     registry = ToolRegistry()
     registered = await register_mcp_server(registry, "demo", sys.executable, _SERVER_ARGS)
-    assert set(registered) == {"mcp_demo_echo", "mcp_demo_server_time", "mcp_demo_boom"}
+    assert set(registered) == {
+        "mcp_demo_echo",
+        "mcp_demo_server_time",
+        "mcp_demo_boom",
+        "mcp_demo_slow",
+    }
     tool = registry.get("mcp_demo_echo")
     assert isinstance(tool, McpToolAdapter)
     assert tool.domain == ExecutionDomain.SKILL_ONLY
@@ -96,7 +101,31 @@ async def test_register_duplicate_server_skips_conflict() -> None:
     await register_mcp_server(registry, "demo", sys.executable, _SERVER_ARGS)
     again = await register_mcp_server(registry, "demo", sys.executable, _SERVER_ARGS)
     assert again == []  # 全部名称冲突被跳过
-    assert len(registry) == 3  # 首次注册的工具保留
+    assert len(registry) == 4  # 首次注册的工具保留
+
+
+@pytest.mark.asyncio
+async def test_register_allow_tools_filters_whitelist() -> None:
+    """allow_tools 白名单: 只注册白名单内工具, 未命中静默跳过."""
+    from knowflow.core.exceptions import NotFoundError
+
+    registry = ToolRegistry()
+    registered = await register_mcp_server(
+        registry, "demo", sys.executable, _SERVER_ARGS, allow_tools=["echo"]
+    )
+    assert registered == ["mcp_demo_echo"]
+    with pytest.raises(NotFoundError):
+        registry.get("mcp_demo_server_time")
+    with pytest.raises(NotFoundError):
+        registry.get("mcp_demo_boom")
+
+
+@pytest.mark.asyncio
+async def test_call_tool_timeout_raises_connection_error() -> None:
+    """调用超时(远端挂死): 抛 McpConnectionError, 由上层降级."""
+    gateway = McpGateway(sys.executable, _SERVER_ARGS, _SERVER_ENV, timeout=0.5)
+    with pytest.raises(McpConnectionError, match="超时"):
+        await gateway.call_tool("slow", {})
 
 
 # ── 隔离: 执行域 + Skill 激活可见 ──

@@ -1,6 +1,6 @@
 """Skill 端点单测 - 列表/启停.
 
-GET /skills 返回全部 5 个 Skill(含运行时启停状态).
+GET /skills 返回全部 6 个 Skill(含运行时启停状态).
 PUT /skills/{name}/toggle 切换启停; 不存在返回 404.
 """
 
@@ -8,11 +8,11 @@ from fastapi.testclient import TestClient
 
 
 def test_list_skills(client: TestClient) -> None:
-    """GET /skills 返回 5 个 Skill."""
+    """GET /skills 返回 6 个 Skill."""
     resp = client.get("/api/v1/skills")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 5
+    assert len(data) == 6
     names = {s["name"] for s in data}
     expected = {
         "knowledge_qa",

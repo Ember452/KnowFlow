@@ -101,7 +101,13 @@ async def _init_mcp_tools() -> None:
         except ValueError:
             domain = ExecutionDomain.SKILL_ONLY
         args = [str(a) for a in cfg.get("args", [])]
-        await register_mcp_server(registry, server_id, command, args, domain=domain)
+        allow_tools_raw = cfg.get("allow_tools")
+        allow_tools = [str(t) for t in allow_tools_raw] if allow_tools_raw else None
+        env_raw = cfg.get("env")
+        env = {str(k): str(v) for k, v in env_raw.items()} if env_raw else None
+        await register_mcp_server(
+            registry, server_id, command, args, domain=domain, env=env, allow_tools=allow_tools
+        )
 
 
 def _dispose_ai_singletons() -> None:

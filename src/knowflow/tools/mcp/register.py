@@ -23,8 +23,9 @@ async def register_mcp_server(
     *,
     domain: ExecutionDomain = ExecutionDomain.SKILL_ONLY,
     env: dict[str, str] | None = None,
+    allow_tools: list[str] | None = None,
 ) -> list[str]:
-    """连接 MCP Server 并把其全部工具注册进 registry.
+    """连接 MCP Server 并注册工具进 registry(可白名单过滤).
 
     Args:
         registry: 目标工具注册表.
@@ -33,6 +34,8 @@ async def register_mcp_server(
         args: 启动参数.
         domain: 工具执行域(默认 SKILL_ONLY: 需 Skill 激活才可见).
         env: 附加环境变量.
+        allow_tools: 工具白名单; 非 None 时只注册白名单内工具
+            (官方全量 server 接入时控制可见工具膨胀, 未命中静默跳过).
 
     Returns:
         成功注册的工具名列表. Server 连接失败返回空列表并告警(不抛出).
@@ -46,6 +49,9 @@ async def register_mcp_server(
 
     registered: list[str] = []
     for info in infos:
+        if allow_tools is not None and info.name not in allow_tools:
+            logger.info("mcp.tool_filtered", server_id=server_id, tool=info.name)
+            continue
         adapter = McpToolAdapter(server_id, info, gateway, domain=domain)
         try:
             registry.register(adapter)
