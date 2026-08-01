@@ -19,9 +19,14 @@ def test_health_endpoint() -> None:
 
 
 def test_root_endpoint() -> None:
-    """根路由返回应用名与版本."""
+    """根路由: 前端构建产物存在时返回 SPA 入口页, 否则返回应用名与版本."""
     resp = client.get("/")
     assert resp.status_code == 200
+    content_type = resp.headers.get("content-type", "")
+    if "text/html" in content_type:
+        # 已构建 web/dist: 返回前端入口页
+        assert "KnowFlow" in resp.text
+        return
     body = resp.json()
     assert body["app"] == "KnowFlow"
     assert "version" in body
