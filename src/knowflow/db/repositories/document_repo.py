@@ -89,9 +89,13 @@ class DocumentRepo:
         await self.session.flush()
         return True
 
-    async def find_by_content_hash(self, content_hash: str) -> Document | None:
-        """按内容哈希查重."""
+    async def find_by_content_hash(
+        self, content_hash: str, *, user_id: str | None = None
+    ) -> Document | None:
+        """按内容哈希查重(限定用户范围, 避免跨用户命中他人文档)."""
         stmt = select(Document).where(Document.content_hash == content_hash)
+        if user_id is not None:
+            stmt = stmt.where(Document.user_id == user_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 

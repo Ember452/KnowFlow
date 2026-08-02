@@ -83,6 +83,24 @@ async def test_document_find_by_content_hash(db_session) -> None:  # type: ignor
 
 
 @pytest.mark.asyncio
+async def test_document_find_by_content_hash_scoped_to_user(db_session) -> None:  # type: ignore[no-untyped-def]
+    """查重限定用户范围: 不同用户同 hash 不互相命中."""
+    repo = DocumentRepo(db_session)
+    await repo.create(
+        title="d",
+        source_uri="a",
+        file_type="pdf",
+        size_bytes=1,
+        content_hash="abc123",
+        user_id="u1",
+    )
+    await db_session.commit()
+
+    assert await repo.find_by_content_hash("abc123", user_id="u1") is not None
+    assert await repo.find_by_content_hash("abc123", user_id="u2") is None
+
+
+@pytest.mark.asyncio
 async def test_document_get_many_titles(db_session) -> None:  # type: ignore[no-untyped-def]
     """get_many_titles 批量返回 doc_id -> title, 空列表返回空 dict."""
     repo = DocumentRepo(db_session)

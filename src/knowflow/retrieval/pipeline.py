@@ -173,6 +173,12 @@ class RetrievalPipeline:
                 duration_ms=duration_ms,
             )
         except Exception as exc:
+            # 清理本次可能已写入的半截数据(向量/BM25/PG chunks), best-effort 不掩盖原始异常;
+            # 否则 worker 重试会重复写入, 产生重复 chunks 与向量
+            with contextlib.suppress(Exception):
+                self.deps.vector_store.delete_by_doc(doc_id)
+                self.deps.bm25_store.delete_by_doc(doc_id)
+                await self.deps.session.execute(delete(Chunk).where(Chunk.doc_id == doc_id))
             await self.deps.document_repo.update_status(doc_id, "failed", error_message=str(exc))
             await self.deps.session.commit()
             logger.error("pipeline.index_failed", doc_id=doc_id, error=str(exc))

@@ -86,6 +86,13 @@ class FakeBM25Store:
         return 0
 
 
+class BoomVectorStore(FakeVectorStore):
+    """upsert 抛异常, 模拟 Milvus 故障(此时 PG chunks 已全部写入)."""
+
+    def upsert(self, chunks: list[ChunkVector]) -> int:
+        raise RuntimeError("milvus down")
+
+
 class FakeRetrievalCache:
     """Fake retrieval cache, 记录 clear_prefix 调用次数."""
 
@@ -230,6 +237,65 @@ async def test_index_document_failed_keeps_retrieval_cache(db_session: Any) -> N
         await pipeline.index_document(doc.id)
 
     assert cache.clear_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_index_failure_cleans_partial_data(db_session: Any) -> None:
+    """索引中途失败(向量写入阶段): 已写入的半截 chunks 被清理, 状态 failed."""
+    doc_repo = DocumentRepo(db_session)
+    chunk_repo = ChunkRepo(db_session)
+    doc = await doc_repo.create(
+        title="partial", source_uri="partial.txt", file_type="txt", size_bytes=50
+    )
+    await db_session.commit()
+
+    deps, _, vector_store, bm25_store = _make_deps(
+        db_session,
+        minio=FakeMinio(b"Some content that will be chunked into pieces."),
+        vector_store=BoomVectorStore(),
+    )
+    pipeline = RetrievalPipeline(deps)
+
+    with pytest.raises(IndexError):
+        await pipeline.index_document(doc.id)
+
+    # 半截 chunks 被清理, 向量/BM25 清理被调用(best-effort)
+    assert await chunk_repo.list_by_doc(doc.id) == []
+    assert vector_store.deleted_docs == [doc.id]
+    assert bm25_store.deleted_docs == [doc.id]
+    updated = await doc_repo.get(doc.id)
+    assert updated is not None
+    assert updated.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_index_retry_after_failure_is_idempotent(db_session: Any) -> None:
+    """失败清理后重试成功: chunk 数与单次索引一致, 不产生重复数据."""
+    doc_repo = DocumentRepo(db_session)
+    chunk_repo = ChunkRepo(db_session)
+    doc = await doc_repo.create(
+        title="retry", source_uri="retry.txt", file_type="txt", size_bytes=50
+    )
+    await db_session.commit()
+
+    content = b"Retry idempotency test content. Should not duplicate anything."
+    # 第一次: 向量写入阶段失败
+    deps, *_ = _make_deps(db_session, minio=FakeMinio(content), vector_store=BoomVectorStore())
+    pipeline = RetrievalPipeline(deps)
+    with pytest.raises(IndexError):
+        await pipeline.index_document(doc.id)
+
+    # 第二次: 正常重试
+    deps2, *_ = _make_deps(db_session, minio=FakeMinio(content))
+    pipeline2 = RetrievalPipeline(deps2)
+    result = await pipeline2.index_document(doc.id)
+
+    chunks = await chunk_repo.list_by_doc(doc.id)
+    assert len(chunks) == result.chunk_count
+    assert len({c.id for c in chunks}) == result.chunk_count
+    updated = await doc_repo.get(doc.id)
+    assert updated is not None
+    assert updated.status == "ready"
 
 
 @pytest.mark.asyncio

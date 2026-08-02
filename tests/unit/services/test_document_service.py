@@ -36,7 +36,7 @@ async def test_upload_stores_and_enqueues(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_upload_dedup_returns_existing(db_session) -> None:
-    """同内容二次上传命中秒传, 不再存储/入队."""
+    """同用户同内容二次上传命中秒传, 不再存储/入队."""
     svc = _service(db_session)
     first = await svc.upload("a.md", b"same", "u1")
     minio2 = FakeMinio()
@@ -47,6 +47,21 @@ async def test_upload_dedup_returns_existing(db_session) -> None:
     assert second.doc_id == first.doc_id
     assert len(minio2.put_calls) == 0
     assert len(broker2.enqueued) == 0
+
+
+@pytest.mark.asyncio
+async def test_upload_dedup_scoped_to_user(db_session) -> None:
+    """秒传仅限同用户: 不同用户上传相同内容各自入库/索引."""
+    svc1 = _service(db_session)
+    first = await svc1.upload("a.md", b"same", "u1")
+    minio2 = FakeMinio()
+    broker2 = FakeBroker()
+    svc2 = _service(db_session, minio2, broker2)
+    second = await svc2.upload("b.md", b"same", "u2")
+    assert second.duplicated is False
+    assert second.doc_id != first.doc_id
+    assert len(minio2.put_calls) == 1
+    assert len(broker2.enqueued) == 1
 
 
 @pytest.mark.asyncio
@@ -104,10 +119,21 @@ async def test_delete_removes_document(db_session) -> None:
     """删除后 list 不再包含."""
     svc = _service(db_session)
     up = await svc.upload("d.md", b"x", "u1")
-    resp = await svc.delete(up.doc_id)
+    resp = await svc.delete(up.doc_id, "u1")
     assert resp.deleted is True
     _items, total = await svc.list("u1")
     assert total == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_other_user_forbidden(db_session) -> None:
+    """删除他人文档被拒绝(404 不泄露存在性), 文档保留."""
+    svc = _service(db_session)
+    up = await svc.upload("d.md", b"x", "u1")
+    with pytest.raises(NotFoundError):
+        await svc.delete(up.doc_id, "u2")
+    _items, total = await svc.list("u1")
+    assert total == 1
 
 
 @pytest.mark.asyncio
@@ -124,13 +150,13 @@ async def test_delete_clears_retrieval_cache(db_session) -> None:
     cache = FakeRetrievalCache()
     svc = _service(db_session, retrieval_cache=cache)
     up = await svc.upload("d.md", b"x", "u1")
-    await svc.delete(up.doc_id)
+    await svc.delete(up.doc_id, "u1")
     assert cache.clear_calls == 1
 
     # 删除不存在的文档不触发失效
     cache.clear_calls = 0
     with pytest.raises(NotFoundError):
-        await svc.delete(99999)
+        await svc.delete(99999, "u1")
     assert cache.clear_calls == 0
 
 
@@ -139,7 +165,7 @@ async def test_delete_not_found(db_session) -> None:
     """删除不存在抛 NotFoundError."""
     svc = _service(db_session)
     with pytest.raises(NotFoundError):
-        await svc.delete(99999)
+        await svc.delete(99999, "u1")
 
 
 @pytest.mark.asyncio
@@ -149,7 +175,19 @@ async def test_reindex_resets_status_and_enqueues(db_session) -> None:
     svc = _service(db_session, broker=broker)
     up = await svc.upload("r.md", b"x", "u1")
     broker.enqueued.clear()
-    resp = await svc.reindex(up.doc_id)
+    resp = await svc.reindex(up.doc_id, "u1")
     assert resp.status == "pending"
     assert len(broker.enqueued) == 1
     assert broker.enqueued[0][1]["task"] == "reindex"
+
+
+@pytest.mark.asyncio
+async def test_reindex_other_user_forbidden(db_session) -> None:
+    """重建他人文档索引被拒绝, 不投递任务."""
+    broker = FakeBroker()
+    svc = _service(db_session, broker=broker)
+    up = await svc.upload("r.md", b"x", "u1")
+    broker.enqueued.clear()
+    with pytest.raises(NotFoundError):
+        await svc.reindex(up.doc_id, "u2")
+    assert len(broker.enqueued) == 0

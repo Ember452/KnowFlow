@@ -70,10 +70,11 @@ async def delete_document(
     db: DbDep,
     minio: MinioDep,
     broker: BrokerDep,
+    user_id: UserDep,
 ) -> ApiResponse[DeleteResponse]:
-    """删除文档及索引."""
+    """删除文档及索引(仅属主可操作)."""
     service = DocumentService(session=db, minio=minio, broker=broker)
-    resp = await service.delete(doc_id)
+    resp = await service.delete(doc_id, user_id)
     return ApiResponse(data=resp)
 
 
@@ -83,8 +84,9 @@ async def reindex_document(
     db: DbDep,
     minio: MinioDep,
     broker: BrokerDep,
+    user_id: UserDep,
 ) -> ApiResponse[ReindexResponse]:
-    """重建文档索引(先清理后重建)."""
+    """重建文档索引(先清理后重建, 仅属主可操作)."""
     service = DocumentService(session=db, minio=minio, broker=broker)
-    resp = await service.reindex(doc_id)
+    resp = await service.reindex(doc_id, user_id)
     return ApiResponse(data=resp)

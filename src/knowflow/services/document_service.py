@@ -79,8 +79,8 @@ class DocumentService:
         file_type = self._validate(file_name, content)
         content_hash = self._sha256(content)
 
-        # 秒传去重: 已存在同 hash 的文档直接返回(不重复存储/索引)
-        existing = await self._repo.find_by_content_hash(content_hash)
+        # 秒传去重: 同用户已存在同 hash 的文档直接返回(不重复存储/索引)
+        existing = await self._repo.find_by_content_hash(content_hash, user_id=user_id)
         if existing is not None:
             logger.info("document.dedup_hit", doc_id=existing.id, hash=content_hash)
             return UploadResponse(
@@ -139,10 +139,13 @@ class DocumentService:
         items = [self._to_info(d) for d in docs]
         return items, total
 
-    async def delete(self, doc_id: int) -> DeleteResponse:
-        """删除文档: 清理向量/BM25/MinIO → 删 DB(级联)."""
+    async def delete(self, doc_id: int, user_id: str) -> DeleteResponse:
+        """删除文档: 校验归属 → 清理向量/BM25/MinIO → 删 DB(级联)."""
         doc = await self._repo.get(doc_id)
         if doc is None:
+            raise NotFoundError(f"文档不存在: doc_id={doc_id}")
+        # 归属校验: 只允许属主删除, 用 404 不泄露他人文档存在性; 历史遗留(user_id 为空)放行
+        if doc.user_id is not None and doc.user_id != user_id:
             raise NotFoundError(f"文档不存在: doc_id={doc_id}")
 
         # 清理向量库与 BM25(best-effort, 失败不阻塞删除; 依赖未初始化时跳过)
@@ -169,11 +172,14 @@ class DocumentService:
         await self._retrieval_cache.clear_prefix()
         return DeleteResponse(doc_id=doc_id, deleted=deleted)
 
-    async def reindex(self, doc_id: int) -> ReindexResponse:
-        """重建索引: 状态置 pending → 投递 reindex 任务."""
+    async def reindex(self, doc_id: int, user_id: str) -> ReindexResponse:
+        """重建索引: 校验归属 → 状态置 pending → 投递 reindex 任务."""
         assert self.broker is not None, "reindex 需要 broker"
         doc = await self._repo.get(doc_id)
         if doc is None:
+            raise NotFoundError(f"文档不存在: doc_id={doc_id}")
+        # 归属校验: 只允许属主重建索引, 用 404 不泄露他人文档存在性; 历史遗留(user_id 为空)放行
+        if doc.user_id is not None and doc.user_id != user_id:
             raise NotFoundError(f"文档不存在: doc_id={doc_id}")
         await self._repo.update_status(doc_id, "pending")
         await self.session.commit()

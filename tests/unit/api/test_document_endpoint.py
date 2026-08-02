@@ -54,10 +54,10 @@ def test_list_documents(client: TestClient) -> None:
 
 
 def test_delete_document(client: TestClient) -> None:
-    """删除后列表不再包含该文档."""
+    """属主删除后列表不再包含该文档."""
     up = _upload(client, content=b"to-delete")
     doc_id = up["data"]["doc_id"]
-    resp = client.delete(f"/api/v1/documents/{doc_id}")
+    resp = client.delete(f"/api/v1/documents/{doc_id}", headers={"X-User-Id": "u1"})
     assert resp.status_code == 200
     assert resp.json()["data"]["deleted"] is True
     # 列表中不再有
@@ -65,16 +65,34 @@ def test_delete_document(client: TestClient) -> None:
     assert all(item["id"] != doc_id for item in lst["items"])
 
 
+def test_delete_other_user_forbidden(client: TestClient) -> None:
+    """其他用户删除返回 404(不泄露存在性), 属主仍可删除."""
+    up = _upload(client, content=b"private")
+    doc_id = up["data"]["doc_id"]
+    resp = client.delete(f"/api/v1/documents/{doc_id}", headers={"X-User-Id": "u2"})
+    assert resp.status_code == 404
+    resp = client.delete(f"/api/v1/documents/{doc_id}", headers={"X-User-Id": "u1"})
+    assert resp.status_code == 200
+
+
 def test_delete_not_found(client: TestClient) -> None:
     """删除不存在文档返回 404."""
-    resp = client.delete("/api/v1/documents/99999")
+    resp = client.delete("/api/v1/documents/99999", headers={"X-User-Id": "u1"})
     assert resp.status_code == 404
 
 
 def test_reindex_document(client: TestClient) -> None:
-    """重建索引置 pending 并投递任务."""
+    """属主重建索引置 pending 并投递任务."""
     up = _upload(client, content=b"reindex-me")
     doc_id = up["data"]["doc_id"]
-    resp = client.post(f"/api/v1/documents/{doc_id}/reindex")
+    resp = client.post(f"/api/v1/documents/{doc_id}/reindex", headers={"X-User-Id": "u1"})
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == "pending"
+
+
+def test_reindex_other_user_forbidden(client: TestClient) -> None:
+    """其他用户重建索引返回 404."""
+    up = _upload(client, content=b"reindex-private")
+    doc_id = up["data"]["doc_id"]
+    resp = client.post(f"/api/v1/documents/{doc_id}/reindex", headers={"X-User-Id": "u2"})
+    assert resp.status_code == 404
