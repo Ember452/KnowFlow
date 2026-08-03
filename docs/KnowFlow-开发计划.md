@@ -141,6 +141,8 @@ P0 脚手架 ─▶ P1 基础设施 ─▶ P2 数据模型 ─┬─▶ P3 混�
                                         P7 上下文+记忆 ◀───────────┤
                                         P9 沙盒文件系统 ◀──────────┘
 P11 工程化收尾（面试就绪）
+
+P12 报告流水线（V2 改造）──▶ P13 飞书发布（V2 改造）   # 独立于 P0-P11 主链, 复用其基础设施
 ```
 
 | Phase | 名称 | 预计 | 优先级 | 里程碑 |
@@ -157,6 +159,8 @@ P11 工程化收尾（面试就绪）
 | P9 | 沙盒文件系统 | 1-2 天 | 必做 | M5 |
 | P10 | 可观测、离线评测与指标复现 | 2-3 天 | 必做（指标来源） | M8 |
 | P11 | 工程化收尾与面试就绪 | 2-3 天 | 必做 | M8 |
+| P12 | 研究报告生成流水线 | 3-4 天 | 必做（V2 核心亮点） | M9 |
+| P13 | 飞书 MCP 接入与报告发布 | 2-3 天 | 必做（V2 核心亮点） | M9 |
 
 ### 里程碑分组（合并建议）
 
@@ -172,8 +176,9 @@ P11 工程化收尾（面试就绪）
 | M6 | P7 | 上下文工程与记忆 | 2-3 天 | 内容量大，独立验收 |
 | M7 | P8 | Multi-Agent 编排 | 2-3 天 | 核心亮点，依赖 M4/M5 完成 |
 | M8 | P10 + P11 | 评测复现与面试就绪 | 4-5 天 | 收尾性质，指标汇总 + 工程化 |
+| M9 | P12 + P13 | 研究报告生成与飞书发布（V2） | 5-7 天 | V2 改造，复用 M1-M8 全链路基础，面向报告场景闭环 |
 
-> 推进顺序即 M1 → M8；里程碑完成 = 其内部各 Phase 验收标准全部通过。单独进行的 Phase 即为独立里程碑。
+> 推进顺序即 M1 → M8（V2 改造为 M9，前置依赖 M1-M8 基础设施）；里程碑完成 = 其内部各 Phase 验收标准全部通过。单独进行的 Phase 即为独立里程碑。
 
 > 总工期约 21-30 天。若时间紧张，裁剪顺序：P9 简化为最小实现 → P11 中 k8s 部分简化 → P8 只做单委派场景。
 
@@ -564,6 +569,75 @@ docker build -t knowflow:latest . && docker compose -f docker-compose.yml up   #
 
 ---
 
+### P12 · 研究报告生成流水线（V2 核心亮点）
+
+**对应设计文档**：5.1-5.4、5.6、5.7 D8/D10/D11；《项目结构》agents/report/
+
+**关键决策（先定后写）**：
+
+- **独立流水线模块**：报告链路新增 `agents/report/`，不扩展现有 orchestrator（决策 D8，写入 `docs/adr/0008-report-pipeline.md`）。
+- **引用溯源硬性规范**：Writer 强制 `[n]` 标注 + Reviewer 双校验（引用真实性/结论支持度），防幻觉（决策 D10）。
+
+**任务清单**：
+
+1. `agents/report/models.py`：ReportSpec（大纲/检索计划/引用规范）、EvidencePack、Chapter、ReportResult dataclass
+2. `agents/report/planner.py`：Planner（LLM 生成大纲：章节 + 每章检索计划，prompt 注入可用信息源清单）
+3. `tools/builtin/memory_tool.py`：记忆检索工具（包装 memory/recall.py，直接域，供记忆 Agent 使用）
+4. `agents/report/researcher.py`：Researcher（注入独立 retriever，按任务意图检索，产出带出处的证据片段；复用 subagent 独立上下文）
+5. `agents/report/synthesizer.py`：Synthesizer（证据去重/按章节组织证据包）
+6. `agents/report/writer.py`：Writer（分章节并行撰写，章节独立 context budget，强制 `[n]` 标注）
+7. `agents/report/reviewer.py`：Reviewer（引用定位校验 + 结论支持度校验，不通过打回重写）
+8. `agents/report/pipeline.py`：ReportPipeline（六阶段编排，复用 concurrent/checkpoint，阶段进度经 on_progress 上抛）
+9. `services/report_service.py` + `api/v1/endpoints/report.py`：报告任务创建/进度（SSE）/结果查询；Markdown 落盘沙盒 `sessions/{sid}/reports/{id}.md`
+10. `eval/datasets/report_eval.jsonl`：报告评测集（含引用覆盖率/幻觉率标注）+ `eval/scripts/run_report_eval.py`
+11. 单测：planner（大纲结构校验）、researcher（独立检索/回退）、synthesizer、writer（引用标注）、reviewer（双校验）、pipeline（阶段流转/降级）
+
+**验收标准**：
+
+```bash
+uv run pytest tests/unit/report -q                                # 全绿
+# 构造报告任务（如"基于知识库总结 X 产品线优劣势并补充公开资料"）触发六阶段流水线
+curl http://localhost:8000/api/v1/reports/{id}                    # 各阶段状态与进度可见
+curl http://localhost:8000/api/v1/reports/{id}/result             # spec/evidence/chapters/references 完整
+# 报告落盘沙盒 sessions/{sid}/reports/{id}.md 可读
+uv run python eval/scripts/run_report_eval.py                     # 引用覆盖率 ≥95%、幻觉率 ≤5%（实测，不伪造）
+```
+
+---
+
+### P13 · 飞书 MCP 接入与报告发布（V2 核心亮点）
+
+**对应设计文档**：5.5、5.6、5.7 D9/D11；《项目结构》tools/mcp/servers/feishu/
+
+**关键决策（先定后写）**：
+
+- **飞书走自建 MCP server**：`tools/mcp/servers/feishu/`，stdio 协议，经既有注册链路接入（决策 D9，写入 `docs/adr/0009-feishu-mcp.md`）。
+
+**任务清单**：
+
+1. MCP 接入（官方优先+自建兜底）：优先配置官方 lark-openapi-mcp（npx 启动）经 `allow_tools` 白名单接入；无 Node 环境时回退 `tools/mcp/servers/feishu/server.py`（stdio，工具 `create_doc` / `append_to_doc` / `update_doc`，lark SDK 封装）
+2. `tools/mcp/register.py`：新增 `allow_tools` 白名单参数（非 None 时只注册白名单内工具，未命中不报错）+ `core/lifecycle.py` 透传
+3. `tools/mcp/gateway.py`：`call_tool` 调用超时（`asyncio.wait_for`，`mcp_call_timeout_seconds` 默认 30s）
+4. `core/config.py`：新增 `feishu_app_id` / `feishu_app_secret` / `feishu_user_access_token` / `mcp_call_timeout_seconds` 配置项 + `mcp_servers` 追加飞书声明（skill_only 域）
+5. `agents/report/publisher.py`：Publisher（报告 → 飞书文档：标题 + 分章节写入 + 引用标注，返回文档链接）；幂等（重复 publish 走 update）+ 指数退避重试（1s/3s/9s 共 3 次）+ 凭证错误可读提示 + 单章失败标记不整体回滚
+6. `api/v1/endpoints/report.py`：`POST /api/v1/reports/{id}/publish` 发布端点（发布动作 skill_only 域工具，trace 全链路）
+7. `skills/report_publish/SKILL.md`：发布 Skill（skill_only 域，声明 mcp_feishu_* 工具）
+8. 单测：publisher（fake 适配接口：重试成功/重试耗尽降级/幂等/单章失败/凭证错误）、gateway 超时、allow_tools 过滤、发布降级（server 不可用不阻塞报告生成）
+
+**验收标准**：
+
+```bash
+uv run pytest tests/unit/tools/mcp -q                             # 全绿
+# 前置：飞书开放平台自建应用（app_id/app_secret + 云文档读写权限 + 用户授权），配置入 .env
+# 报告生成后 POST /api/v1/reports/{id}/publish → 返回飞书文档链接
+# 打开飞书文档：标题/章节/引用标注完整
+# trace 可见 feishu 工具调用（注册→治理→隔离→调用→trace 闭环）
+# 未配置凭证时：发布返回降级提示，报告生成不受影响
+# 容错用例：MCP 调用超时降级、allow_tools 白名单过滤生效、发布重试耗尽后降级沙盒交付（均有单测）
+```
+
+---
+
 ## 五、全局验收清单（面试就绪总检查）
 
 - [ ] `git clone` 后按 README 快速开始 3 步能起服务
@@ -575,8 +649,10 @@ docker build -t knowflow:latest . && docker compose -f docker-compose.yml up   #
 - [ ] ruff / mypy / pytest / pre-commit 全绿,覆盖率达标
 - [ ] CI 流水线配置完整（可展示截图）
 - [ ] Dockerfile + deploy/k8s 清单齐全
-- [ ] README / architecture.md / api_reference.md / skill_development.md / deployment.md / ADR×7 / interview_story.md 齐全
+- [ ] README / architecture.md / api_reference.md / skill_development.md / deployment.md / ADR×9 / interview_story.md 齐全
 - [ ] Git 历史干净规范,CHANGELOG 有记录
+- [ ] （V2）报告流水线六阶段可演示,报告落盘沙盒可读,引用覆盖率/幻觉率有实测数据
+- [ ] （V2）飞书发布可演示:报告一键写入云文档,trace 可见 feishu 调用链路
 
 ---
 
@@ -589,3 +665,4 @@ docker build -t knowflow:latest . && docker compose -f docker-compose.yml up   #
 | LLM API Key 成本 | 评测与演示用低价模型(deepseek-chat 等),大模型只用于实体抽取/汇总等必要处 |
 | 指标达不到设计目标 | 指标是"目标值",验收以"有实测数据 + 趋势正确"为准(如 8% 提升,达到 5%+ 也如实报告);**严禁伪造数据**——面试被追问口径时诚实说明 |
 | 时间不足 | 裁剪顺序:P9 最小实现 → P11 的 k8s 简化 → P8 只做单委派;但 P3/P6/P10 指标必须真实复现 |
+| 飞书凭证缺失/权限不足 | 发布降级为沙盒 Markdown 输出,报告生成链路不受影响;发布需飞书自建应用凭证(文档说明) |

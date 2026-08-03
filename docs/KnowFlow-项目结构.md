@@ -135,7 +135,17 @@ knowflow/
 │       │   ├── checkpoint.py             # CheckpointManager（父子关系/序列化/恢复）
 │       │   ├── delegation.py             # TaskDelegation（委派协议/父子映射）
 │       │   ├── concurrent.py             # 并发执行器（asyncio.gather/超时/降级）
-│       │   └── prompts.py                # Agent 系统 Prompt 模板
+│       │   ├── prompts.py                # Agent 系统 Prompt 模板
+│       │   └── report/                   # ── F7(V2): 研究报告生成流水线 ──
+│       │       ├── __init__.py
+│       │       ├── models.py             # ReportSpec/EvidencePack/Chapter/ReportResult
+│       │       ├── planner.py            # Planner（大纲/检索计划/引用规范）
+│       │       ├── researcher.py         # Researcher（独立检索器按需检索）
+│       │       ├── synthesizer.py        # Synthesizer（证据去重/组织）
+│       │       ├── writer.py             # Writer（分章节并行撰写）
+│       │       ├── reviewer.py           # Reviewer（引用真实性/结论支持度校验）
+│       │       ├── publisher.py          # Publisher（Markdown 落盘/飞书发布）
+│       │       └── pipeline.py           # ReportPipeline（六阶段流水线编排）
 │       │
 │       ├── retrieval/                    # ── F1: 混合检索模块 ──
 │       │   ├── __init__.py
@@ -180,7 +190,9 @@ knowflow/
 │       │       ├── client.py             # MCPClient（连接/握手/工具发现）
 │       │       ├── adapter.py            # MCP 工具适配（转 BaseTool）
 │       │       ├── transport.py          # 传输层（stdio/SSE/HTTP）
-│       │       └── registry.py           # MCP 服务器注册管理
+│       │       ├── registry.py           # MCP 服务器注册管理
+│       │       └── servers/feishu/       # 飞书 MCP server（V2: 云文档 create/append/update）
+│       │           └── server.py         # stdio server（lark SDK 封装）
 │       │
 │       ├── context/                      # ── F4: 上下文工程模块 ──
 │       │   ├── __init__.py
