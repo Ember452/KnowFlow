@@ -61,9 +61,9 @@ async def chat(
     req: ChatRequest,
     db: DbDep,
     retriever: RetrieverDep,
-    llm: LlmDep,
+    llm: LlmDep,  # 返回一个chatOpenAI 单例
     orchestrator: OrchestratorDep,
-    redis: RedisDep,
+    redis: RedisDep,  # Redis客户端
     embedding: EmbeddingDep,
     context_manager: ContextManagerDep,
     multi_agent: MultiAgentDep,

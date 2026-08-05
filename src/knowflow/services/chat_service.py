@@ -244,25 +244,27 @@ class ChatService:
 
     async def chat(self, req: ChatRequest) -> ChatResponse:
         """同步对话: 检索 → (工具编排/记忆/上下文策略) → LLM 生成 → 落库."""
-        start = time.perf_counter()
+        start = time.perf_counter()  # 记录性能计时起点
+        # 确保会话存在(不存在则创建)
         session_id = await self._ensure_session(req.session_id, req.user_id)
         # 先取历史(当前消息入库前), 避免新消息重复注入
         history = await self._load_history(session_id, self.settings.window_max_turns)
-        user_msg = await self._messages.create(
+        user_msg = await self._messages.create(  # 将用户消息持久化入库
             session_id=session_id, role="user", content=req.message
         )
+        # 用户消息写入短期记忆观察
         await self._observe_and_sediment(session_id, req.user_id, "user", req.message)
 
-        result = await self.retriever.retrieve(
+        result = await self.retriever.retrieve(  # 核心检索: 对 query 改写后检索 top_k 相关文档块
             await self._rewrite_query(req.message, history), top_k=self.settings.retrieval_top_k
         )
-        citations = self._to_citations(result.chunks)
-        memory_text = await self._recall_memories(req.message, req.user_id)
+        citations = self._to_citations(result.chunks)  # 检索结果 → 引用格式
+        memory_text = await self._recall_memories(req.message, req.user_id)  # 召回用户长期记忆
 
         # Multi-Agent 版: 复杂任务(可拆分子任务)走编排(委派/并发/汇总), 否则回退下方链路
         if self._multi_agent is not None:
             try:
-                ma = await self._multi_agent.run(
+                ma = await self._multi_agent.run(  # 调用 Multi-Agent 编排
                     req.message,
                     session_id,
                     context=self._format_context(result.chunks),
@@ -272,6 +274,7 @@ class ChatService:
                 # 编排失败(如 checkpoint PG 不可用)不阻塞对话, 回退直连链路
                 logger.warning("chat.multi_agent_failed_fallback", error=str(exc))
                 ma = None
+            # 仅复杂任务且有有效答案时直接返回
             if ma is not None and ma.intent == "complex" and ma.answer:
                 return await self._finalize_chat(
                     session_id,
@@ -285,17 +288,17 @@ class ChatService:
 
         # 工具版: 预检索上下文注入编排器(含记忆), 工具调用后返回最终答案
         if self._orchestrator is not None:
-            context = self._format_context(result.chunks)
+            context = self._format_context(result.chunks)  # 检索结果 → 上下文文本
             if memory_text:
-                context += f"\n\n用户记忆:\n{memory_text}"
-            orc = await self._orchestrator.run(
+                context += f"\n\n用户记忆:\n{memory_text}"  # 将用户记忆注入上下文
+            orc = await self._orchestrator.run(  # 调用工具编排器
                 req.message,
                 session_id=str(session_id),
                 history=history,
                 context=context,
             )
-            if not orc.no_tools:
-                tool_calls = self._to_tool_calls_payload(orc.tool_calls)
+            if not orc.no_tools:  # 有工具调用时直接返回
+                tool_calls = self._to_tool_calls_payload(orc.tool_calls)  # 工具调用 → 前端 payload
                 return await self._finalize_chat(
                     session_id,
                     user_msg,
@@ -307,13 +310,13 @@ class ChatService:
                 )
             # 无可见工具: 回退直连链路
 
-        messages = await self._build_context_messages(
+        messages = await self._build_context_messages(  # 直连链路: 组装上下文消息
             req.message, history, result.chunks, memory_text, session_id
         )
-        llm = self._get_llm()
-        response = await llm.ainvoke(messages)
-        answer = self._extract_text(response)
-        return await self._finalize_chat(
+        llm = self._get_llm()  # 获取 LLM 实例
+        response = await llm.ainvoke(messages)  # 调用 LLM 生成回答
+        answer = self._extract_text(response)  # 从 LLM 响应中提取文本
+        return await self._finalize_chat(  # 最终化: 助手消息落库 + 响应构造
             session_id, user_msg, answer, citations, [], start, user_id=req.user_id
         )
 
