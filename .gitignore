@@ -41,6 +41,7 @@ secrets.yaml
 # ── IDE ──
 .idea/
 .vscode/
+.vs/
 *.swp
 *.swo
 *~
