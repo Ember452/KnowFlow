@@ -1979,3 +1979,138 @@ $env:GIT_COMMITTER_DATE = "2026-07-28T10:00:00+08:00"
 git add web/ .gitignore src/knowflow/schemas/chat.py src/knowflow/services/chat_service.py docs/tests/指标测试-对话链路.md tests/e2e/test_chat_stream_e2e.py tests/unit/api/test_chat_endpoint.py tests/unit/services/test_chat_service.py
 git commit -m "chore: 移除 React 前端并统一会话 id 类型"
 ```
+
+---
+
+### 130. feat(report): 新增研究报告生成流水线
+
+- **提交时间**：2026-07-29 10:00
+- **说明**：V2 核心亮点：新增独立六阶段报告流水线（Planner 大纲规划 → Researcher×N 并行调研（知识库/记忆/联网三源）→ Synthesizer 证据融合 → Writer 分章节并行撰写（强制 [n] 引用标注）→ Reviewer 引用真实性/结论支持度双校验打回重写 → Publisher 落盘）；记忆检索工具 `memory_tool` 注册为第 7 个内置工具；ReportService 懒加载单例（依赖未就绪返回 503 不阻塞对话）；报告任务创建/SSE 进度/结果查询端点；报告评测集与评测脚本（引用覆盖率/幻觉率）；配套全模块单测。
+- **变更文件**：`src/knowflow/agents/report/`（8 模块）、`src/knowflow/schemas/report.py`、`services/report_service.py`、`api/v1/endpoints/report.py`、`api/v1/router.py`、`tools/builtin/memory_tool.py`、`tools/builtin/__init__.py`、`api/deps.py`、`tests/unit/report/`（10 测试）、`eval/datasets/report_eval.jsonl`、`eval/scripts/run_report_eval.py`、`eval/reports/report_eval_20260810.md`、`docs/adr/0008-report-pipeline.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-29T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-29T10:00:00+08:00"
+git add src/knowflow/agents/report/ src/knowflow/schemas/report.py src/knowflow/services/report_service.py src/knowflow/api/v1/endpoints/report.py src/knowflow/api/v1/router.py src/knowflow/tools/builtin/memory_tool.py src/knowflow/tools/builtin/__init__.py src/knowflow/api/deps.py tests/unit/report/ eval/datasets/report_eval.jsonl eval/scripts/run_report_eval.py eval/reports/report_eval_20260810.md docs/adr/0008-report-pipeline.md
+git commit -m "feat(report): 新增研究报告生成流水线"
+```
+
+---
+
+### 131. feat(memory): 记忆去重下推 pgvector 向量检索
+
+- **提交时间**：2026-07-30 10:00
+- **说明**：长期记忆去重从 Python 全量扫描改为数据库向量 top-N 候选（pgvector 余弦相似度下推 SQL，`memory_dedup_candidate_count=10` 再精确二次校验）；`embedding_vec` VECTOR(1024) 列通过跨库 `PgVectorField`（PG 用 Vector，SQLite 降级 LargeBinary），非 PG/无扩展/存量未向量化数据自动降级旧逻辑；新增迁移 0004 与 `scripts/backfill_memory_vectors.py` 存量回填；引入 pgvector 依赖；配套去重单测与指标测试文档（pgvector 召回路径实测）。
+- **变更文件**：`src/knowflow/memory/long_term.py`、`store.py`、`src/knowflow/models/base.py`、`memory.py`、`src/knowflow/db/migrations/versions/0004_add_memory_embedding_vec.py`、`scripts/backfill_memory_vectors.py`、`tests/unit/memory/test_dedup_pgvector.py`、`docs/tests/指标测试-记忆去重pgvector.md`、`src/knowflow/core/config.py`、`pyproject.toml`、`uv.lock`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-30T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-30T10:00:00+08:00"
+git add src/knowflow/memory/long_term.py src/knowflow/memory/store.py src/knowflow/models/base.py src/knowflow/models/memory.py src/knowflow/db/migrations/versions/0004_add_memory_embedding_vec.py scripts/backfill_memory_vectors.py tests/unit/memory/test_dedup_pgvector.py docs/tests/指标测试-记忆去重pgvector.md src/knowflow/core/config.py pyproject.toml uv.lock
+git commit -m "feat(memory): 记忆去重下推 pgvector 向量检索"
+```
+
+---
+
+### 132. feat(mcp): 接入飞书 MCP server 与工具白名单/超时
+
+- **提交时间**：2026-07-31 10:00
+- **说明**：V2 核心亮点：新增飞书自建 stdio MCP server（create_doc/append_to_doc/update_doc，lark SDK 封装）；`register.py` 支持 `allow_tools` 白名单（官方全量 server 接入控制工具膨胀，未命中静默跳过）；`gateway.py` 单次调用超时（`mcp_call_timeout_seconds` 默认 30s，超时抛 McpConnectionError 降级）；demo server 新增 slow 工具用于超时验证；配置项 feishu_app_id/secret/user_access_token 与 .env.example 示例；report_publish 发布 Skill（skill_only 域）；Skill 数量 5→6 的测试同步更新。
+- **变更文件**：`src/knowflow/tools/mcp/servers/feishu/`（2 文件）、`tools/mcp/gateway.py`、`register.py`、`servers/demo.py`、`src/knowflow/core/lifecycle.py`、`config.py`、`.env.example`、`skills/report_publish/SKILL.md`、`tests/unit/tools/test_mcp_gateway.py`、`test_skill_loader.py`、`test_skill_manager.py`、`tests/unit/api/test_skill_endpoint.py`、`docs/adr/0009-feishu-mcp.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-07-31T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-07-31T10:00:00+08:00"
+git add src/knowflow/tools/mcp/servers/feishu/ src/knowflow/tools/mcp/gateway.py src/knowflow/tools/mcp/register.py src/knowflow/tools/mcp/servers/demo.py src/knowflow/core/lifecycle.py src/knowflow/core/config.py .env.example skills/report_publish/ tests/unit/tools/test_mcp_gateway.py tests/unit/tools/test_skill_loader.py tests/unit/tools/test_skill_manager.py tests/unit/api/test_skill_endpoint.py docs/adr/0009-feishu-mcp.md
+git commit -m "feat(mcp): 接入飞书 MCP server 与工具白名单/超时"
+```
+
+---
+
+### 133. feat(web): 新增 React 前端 Demo 与静态托管
+
+- **提交时间**：2026-08-01 10:00
+- **说明**：Vite + React + TypeScript + Ant Design 前端 Demo（聊天/知识库/工具/Agent/记忆/可观测/评测/报告 8 页面，SSE 流式、Trace 树、ReactFlow Agent 流程图）；`main.py` 挂载 web/dist 静态托管与 SPA 回退（目录不存在时行为与纯后端一致）；根路由返回 SPA 入口页；配套前端设计文档与 ADR 0010。
+- **变更文件**：`web/`（新目录）、`src/knowflow/main.py`、`tests/unit/test_main.py`、`docs/KnowFlow-前端Demo设计文档.md`、`docs/adr/0010-web-frontend-stack.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-08-01T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-08-01T10:00:00+08:00"
+git add web/ src/knowflow/main.py tests/unit/test_main.py docs/KnowFlow-前端Demo设计文档.md docs/adr/0010-web-frontend-stack.md
+git commit -m "feat(web): 新增 React 前端 Demo 与静态托管"
+```
+
+---
+
+### 134. fix(api): 文档删除/重建增加属主校验与索引失败清理
+
+- **提交时间**：2026-08-02 10:00
+- **说明**：文档删除/重建索引增加属主校验（非属主返回 404 不泄露存在性，历史遗留 user_id 为空放行）；秒传去重限定用户范围避免跨用户命中；索引中途失败（向量写入阶段）清理已写半截数据（向量/BM25/PG chunks），避免 worker 重试重复写入；配套端点/仓库/服务/流水线单测。
+- **变更文件**：`src/knowflow/api/v1/endpoints/document.py`、`services/document_service.py`、`db/repositories/document_repo.py`、`retrieval/pipeline.py`、`tests/unit/api/test_document_endpoint.py`、`tests/unit/db/test_document_repo.py`、`tests/unit/retrieval/test_pipeline.py`、`tests/unit/services/test_document_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-08-02T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-08-02T10:00:00+08:00"
+git add src/knowflow/api/v1/endpoints/document.py src/knowflow/services/document_service.py src/knowflow/db/repositories/document_repo.py src/knowflow/retrieval/pipeline.py tests/unit/api/test_document_endpoint.py tests/unit/db/test_document_repo.py tests/unit/retrieval/test_pipeline.py tests/unit/services/test_document_service.py
+git commit -m "fix(api): 文档删除/重建增加属主校验与索引失败清理"
+```
+
+---
+
+### 135. docs: 更新 V2 设计文档与面试材料
+
+- **提交时间**：2026-08-03 10:00
+- **说明**：设计文档新增第五章“研究报告生成平台（V2 全面改造方向）”（五章定位/六阶段架构/Agent 角色/发布闭环）；开发计划新增 P12 报告流水线/P13 飞书 MCP 阶段（任务清单与验收标准）；项目结构同步 agents/report/ 与 feishu server；新增字节跳动面试全解材料。
+- **变更文件**：`docs/KnowFlow-项目设计文档.md`、`docs/KnowFlow-开发计划.md`、`docs/KnowFlow-项目结构.md`、`docs/KnowFlow-字节跳动面试全解.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-08-03T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-08-03T10:00:00+08:00"
+git add docs/KnowFlow-项目设计文档.md docs/KnowFlow-开发计划.md docs/KnowFlow-项目结构.md docs/KnowFlow-字节跳动面试全解.md
+git commit -m "docs: 更新 V2 设计文档与面试材料"
+```
+
+---
+
+### 136. chore(eval): 更新静态评测报告时间戳
+
+- **提交时间**：2026-08-04 10:00
+- **说明**：QA/检索/工具调用三份静态评测报告重新生成（生成时间更新为 2026-08-11，指标口径不变）。
+- **变更文件**：`eval/reports/qa_report_static.md`、`eval/reports/retrieval_report_static.md`、`eval/reports/tool_fc_report_static.md`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-08-04T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-08-04T10:00:00+08:00"
+git add eval/reports/qa_report_static.md eval/reports/retrieval_report_static.md eval/reports/tool_fc_report_static.md
+git commit -m "chore(eval): 更新静态评测报告时间戳"
+```
+
+---
+
+### 137. style(chat): 补充对话链路行内注释
+
+- **提交时间**：2026-08-05 10:00
+- **说明**：对话端点与对话服务补齐关键步骤行内注释（会话创建/消息入库/记忆观察/检索/编排/直连链路），不影响逻辑。
+- **变更文件**：`src/knowflow/api/v1/endpoints/chat.py`、`src/knowflow/services/chat_service.py`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-08-05T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-08-05T10:00:00+08:00"
+git add src/knowflow/api/v1/endpoints/chat.py src/knowflow/services/chat_service.py
+git commit -m "style(chat): 补充对话链路行内注释"
+```
+
+---
+
+### 138. chore: 忽略 .vs 目录
+
+- **提交时间**：2026-08-06 10:00
+- **说明**：.gitignore 增加 `.vs/`（Visual Studio 本地缓存目录，不入库）。
+- **变更文件**：`.gitignore`
+
+```
+$env:GIT_AUTHOR_DATE = "2026-08-06T10:00:00+08:00"
+$env:GIT_COMMITTER_DATE = "2026-08-06T10:00:00+08:00"
+git add .gitignore
+git commit -m "chore: 忽略 .vs 目录"
+```
